@@ -1,0 +1,15 @@
+// tie.pkg
+// type tie<data>
+// trm = tie 平台的运行时套件（tie runtime suite）
+// 定位：双层 + 非对称。路线 A（纯编译，零依赖）+ 路线 B（trm 运行时：tieir 字节码 + interp + 可替换后端 + 引擎级 GC）。
+// 权威设计见 docs/designs/trm-final-design.md
+[
+    "name": "trm",
+    "version": "0.1.0",
+    "description": "tie 平台的运行时套件（tie runtime suite）",
+    "role": "logic",
+    "main": "main.tie",
+    "author": "houyangbaoxin2009",
+    "license": "MIT",
+    "dependencies": [],
+]

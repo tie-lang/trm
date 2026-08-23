@@ -1,0 +1,15 @@
+type tie<logic>
+
+// trm（tie runtime suite）入口
+// 现状：项目骨架初始化阶段。开发者不 import trm = 走纯编译路线 A（零依赖）；
+// import trm = 走路线 B（tieir 字节码 + trm 引擎执行）。
+// 权威设计见 docs/designs/trm-final-design.md
+
+const VERSION: string = "0.1.0"
+
+func main() {
+    println("trm = tie 平台的运行时套件")
+    println("路线 A：纯编译（零依赖，安全默认）")
+    println("路线 B：trm 运行时（GC / M:N / 反射 / 动态加载）")
+    println("trm version: " + VERSION)
+}

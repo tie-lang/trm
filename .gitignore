@@ -1,0 +1,17 @@
+# tie 编译产物
+*.exe
+*.ll
+*.a
+*.lib
+
+# 构建缓存
+.tie-cache/
+.pkg/
+
+# 依赖
+.tie/deps/
+tie.lock
+
+# 系统
+.DS_Store
+Thumbs.db
