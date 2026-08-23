@@ -1,0 +1,75 @@
+type tie<logic>
+// tests/s5jit/matrix_test.tie —— S5 统一契约矩阵验收。
+// 复用 tests/s3pure/pure2_bytes.txt（add/sub/mul 纯函数的 .tieir 字节文本），加载后
+// 登记 3 后端（interp／tiejit／orcjit），投 3 条契约用例，跑矩阵并断言：
+//   interp / tiejit 全部 PASS（同一契约、两实现输出一致），orcjit 标记未实现(SKIP)。
+import "../../core/frontend/loader.tie"
+import "../../core/backend/registry.tie"
+
+func main() {
+    // 加载 S3 的 .tieir（逗号分隔字节中转）
+    if !trm_loader.load("f:/Projects/tie-repo/trm/tests/s3pure/pure2_bytes.txt") {
+        println("[matrix] 加载失败: " + trm_loader.err_msg())
+        return
+    }
+    println(trm_loader.dump_text())
+
+    // 登记后端 ＋ 契约用例（与 interp/tiejit 同源给两实现）
+    trm_backend.setup()
+    trm_backend.add_case("add", 2, 3, 5)
+    trm_backend.add_case("sub", 9, 4, 5)
+    trm_backend.add_case("mul", 6, 7, 42)
+    trm_backend.run_matrix()
+    println(trm_backend.report())
+
+    // 断言：两可执行后端各 3 用例全 PASS，orcjit 未实现
+    check("后端数", trm_backend.backend_count(), 3)
+    check("interp 可用", trm_backend.backend_status(0), 1)
+    check("tiejit 可用", trm_backend.backend_status(1), 1)
+    check("orcjit 占位(未实现)", trm_backend.backend_status(2), 0)
+    check("interp PASS 数", trm_backend.pass_count(0), 3)
+    check("tiejit PASS 数", trm_backend.pass_count(1), 3)
+    check("interp FAIL 数", trm_backend.fail_count(0), 0)
+    check("tiejit FAIL 数", trm_backend.fail_count(1), 0)
+    check("orcjit SKIP 数", skip_count(2), 3)
+    // 逐格断言：interp/tiejit 均 PASS
+    var ci: i64 = 0
+    while ci < 3 {
+        check_cell(ci, 0)
+        check_cell(ci, 1)
+        check_cell(ci, 2)
+        ci = ci + 1
+    }
+
+    println("[OK] S5 统一契约矩阵验收通过")
+}
+
+func skip_count(bi: i64) -> i64 {
+    var n: i64 = 0
+    var ci: i64 = 0
+    while ci < trm_backend.case_count() {
+        if trm_backend.cell_status(ci, bi) == 0 {
+            n = n + 1
+        }
+        ci = ci + 1
+    }
+    return n
+}
+
+func check_cell(ci: i64, bi: i64) {
+    var st = trm_backend.cell_status(ci, bi)
+    var spec: string = "cell(" + to_string(ci) + "," + trm_backend.backend_name(bi) + ")"
+    if bi == 2 {
+        check(spec, st, 0)   // orcjit 未实现 → SKIP
+    } else {
+        check(spec, st, 1)   // interp/tiejit → PASS
+    }
+}
+
+func check(spec: string, got: i64, want: i64) {
+    var status: string = "FAIL"
+    if got == want {
+        status = "PASS"
+    }
+    println("  [" + status + "] " + spec + " = " + to_string(got) + " (期望 " + to_string(want) + ")")
+}

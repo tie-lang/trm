@@ -1,0 +1,173 @@
+type tie<class>
+// core/backend/registry.tie —— 后端注册表 + 统一契约矩阵（命名空间 trm_backend）。
+// 对应 port/backend.tie 的 Backend 契约与设计 §7.4「契约矩阵」：
+//   多实现（interp / tiejit / orcjit…）实现同一合同，跑同一组用例，输出须一致。
+// 本文件为“统一契约矩阵”探针：登记各后端（可执行/占位），对同一 .tieir 的一组纯函数
+//   用例，逐个后端执行比对期望，落成 用例×后端 的 PASS/FAIL/SKIP 矩阵。
+// 后端表：0=interp（基准）、1=tiejit（简易执行器）、2=orcjit（LLVM，未实现占位）。
+// 调用：setup() 登记 → add_case() 加用例 → run_matrix() 求解 → report()/cell_* 断言。
+import "../frontend/interp.tie"
+import "./tiejit/simple.tie"
+
+// 矩阵 cell 状态码：1=PASS，2=FAIL，0=SKIP（后端未实现）。
+const ST_PASS: i64 = 1
+const ST_FAIL: i64 = 2
+const ST_SKIP: i64 = 0
+
+// ---------- 后端登记明细 ----------
+var b_name: table<string>;   // 后端名
+var b_stat: table<i64>;      // 1=可执行，0=未实现（占位）
+var b_pass: table<i64>;      // 该后端 PASS 用例数
+var b_fail: table<i64>;
+
+// ---------- 契约用例（扁平表） ----------
+var c_name: table<string>;
+var c_a: table<i64>;
+var c_b: table<i64>;
+var c_want: table<i64>;
+
+// ---------- 矩阵结果（cell = 用例序 * 后端数 + 后端序） ----------
+var m_stat: table<i64>;      // 每格状态码
+var m_got: table<i64>;       // 每格实际输出
+
+namespace trm_backend {
+// 矩阵单元下标：用例 ci × 后端 bi。
+func mat_idx(ci: i64, bi: i64) -> i64 {
+    return ci * backend_count() + bi
+}
+
+// 登记后端（幂等）。
+pub func setup() {
+    if len(b_name) > 0 {
+        return
+    }
+    table_push(b_name, "interp"); table_push(b_stat, 1)
+    table_push(b_name, "tiejit"); table_push(b_stat, 1)
+    table_push(b_name, "orcjit"); table_push(b_stat, 0)   // LLVM ORC 尚未实现
+    b_pass = table_new_i64(); table_push(b_pass, 0); table_push(b_pass, 0); table_push(b_pass, 0)
+    b_fail = table_new_i64(); table_push(b_fail, 0); table_push(b_fail, 0); table_push(b_fail, 0)
+    c_name = table_new_string(); c_a = table_new_i64(); c_b = table_new_i64()
+    c_want = table_new_i64(); m_stat = table_new_i64(); m_got = table_new_i64()
+}
+
+pub func backend_count() -> i64 {
+    return len(b_name)
+}
+pub func backend_name(i: i64) -> string {
+    return b_name[i]
+}
+pub func backend_status(i: i64) -> i64 {
+    return b_stat[i]
+}
+pub func pass_count(i: i64) -> i64 {
+    return b_pass[i]
+}
+pub func fail_count(i: i64) -> i64 {
+    return b_fail[i]
+}
+
+// 追加一个契约用例。
+pub func add_case(name: string, a: i64, b: i64, want: i64) {
+    table_push(c_name, name)
+    table_push(c_a, a)
+    table_push(c_b, b)
+    table_push(c_want, want)
+}
+pub func case_count() -> i64 {
+    return len(c_name)
+}
+
+// 运行某用例于某后端；返回实际值。
+func run_one(ci: i64, bi: i64) -> i64 {
+    var args: table<i64> = table_new_i64()
+    table_push(args, c_a[ci])
+    table_push(args, c_b[ci])
+    if bi == 0 {
+        return trm_interp.run(c_name[ci], args)
+    }
+    return trm_tiejit.run(c_name[ci], args)
+}
+
+// 求解整个契约矩阵。
+pub func run_matrix() {
+    // 预置矩阵容量（flatten 后 cell 数 = 用例 × 后端），避免对空表索引写静默失效。
+    var cells = case_count() * backend_count()
+    m_stat = table_new_i64()
+    m_got = table_new_i64()
+    var pcv: i64 = 0
+    while pcv < cells {
+        table_push(m_stat, ST_SKIP)
+        table_push(m_got, 0)
+        pcv = pcv + 1
+    }
+    var ci: i64 = 0
+    while ci < case_count() {
+        var bi: i64 = 0
+        while bi < backend_count() {
+            var cell = mat_idx(ci, bi)
+            if b_stat[bi] == 1 {
+                var got = run_one(ci, bi)
+                m_got[cell] = got
+                if got == c_want[ci] {
+                    m_stat[cell] = ST_PASS
+                    b_pass[bi] = b_pass[bi] + 1
+                } else {
+                    m_stat[cell] = ST_FAIL
+                    b_fail[bi] = b_fail[bi] + 1
+                }
+            } else {
+                m_stat[cell] = ST_SKIP
+            }
+            bi = bi + 1
+        }
+        ci = ci + 1
+    }
+}
+
+// 断言访问器：cell 状态码（1/2/0）与实际值。
+pub func cell_status(ci: i64, bi: i64) -> i64 {
+    return m_stat[mat_idx(ci, bi)]
+}
+pub func cell_got(ci: i64, bi: i64) -> i64 {
+    return m_got[mat_idx(ci, bi)]
+}
+
+// 可读矩阵报告（表头 + 逐用例行）。
+pub func report() -> string {
+    var s = "[-] 契约矩阵: 列后端="
+    var bi: i64 = 0
+    while bi < backend_count() {
+        s = s + b_name[bi] + "(" + fmt_ok(b_stat[bi]) + ") "
+        bi = bi + 1
+    }
+    s = s + "\n"
+    var ci: i64 = 0
+    while ci < case_count() {
+        s = s + "  [" + c_name[ci] + " " + to_string(c_a[ci]) + "," + to_string(c_b[ci]) + "]"
+        var k: i64 = 0
+        while k < backend_count() {
+            s = s + "  " + b_name[k] + "=" + fmt_st(cell_status(ci, k))
+            k = k + 1
+        }
+        s = s + "\n"
+        ci = ci + 1
+    }
+    return s
+}
+
+func fmt_ok(v: i64) -> string {
+    if v == 1 {
+        return "可用"
+    }
+    return "未实现"
+}
+func fmt_st(v: i64) -> string {
+    if v == ST_PASS {
+        return "PASS"
+    }
+    if v == ST_FAIL {
+        return "FAIL"
+    }
+    return "SKIP"
+}
+}

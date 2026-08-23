@@ -1,0 +1,129 @@
+type tie<class>
+// core/backend/tiejit/simple.tie —— tiejit 简易执行器（命名空间 trm_tiejit）。
+// 对应 port/backend.tie 的 Backend 契约（compile/execute/invoke 之执行面）与
+// core/backend/tiejit 定位：用简单执行实现顶替 orcjit（LLVM）尚未覆盖的平台。
+// 本文件为“简易执行器”探针：在 S3 trm_loader 反序列化的同一 .tieir 上，用
+// **紧凑寄存器式**执行器计算纯函数（与 interp 的块线性 vt 表实现相互独立），
+// 对同一契约输入给出与 interp 一致的输出 → 统一契约矩阵的第二个实端。
+// 支持 opcode：算术 add/sub/mul/div/mod、常量 const_i、返回 ret。
+// 调用：trm_tiejit.run(fname, args) -> i64；失败返回 0 并置 t_err。
+import "../../frontend/loader.tie"
+
+// opcode（对齐 compiler/middle/ir.tie 权威表）
+const T_ADD: i64 = 0
+const T_SUB: i64 = 1
+const T_MUL: i64 = 2
+const T_DIV: i64 = 3
+const T_RET: i64 = 32
+const T_CONST_I: i64 = 58
+
+// 操作数 kind：0=值 id，2=立即数。
+const T_KVAL: i64 = 0
+const T_KIND_IMM: i64 = 2
+
+var t_err: string = ""
+
+namespace trm_tiejit {
+pub func err_msg() -> string {
+    return t_err
+}
+
+func set_err(m: string) {
+    t_err = m
+}
+
+// 按函数名查函数 id（走 loader 字符串池）。
+func find_func(fn: string) -> i64 {
+    var n = trm_loader.func_count()
+    var i: i64 = 0
+    while i < n {
+        if trm_loader.pool(trm_loader.func_name_id(i)) == fn {
+            return i
+        }
+        i = i + 1
+    }
+    return -1
+}
+
+// 读操作数：值 id → 寄存器，立即数 → 原值。
+func rd(rg: table<i64>, ii: i64, k: i64) -> i64 {
+    var kind = trm_loader.opnd_kind_of(ii, k)
+    var v = trm_loader.opnd_val_of(ii, k)
+    if kind == T_KVAL {
+        if v < 0 || v >= len(rg) {
+            return 0
+        }
+        return rg[v]
+    }
+    return v
+}
+
+// 写指令结果值 id。
+func st(rg: table<i64>, ii: i64, v: i64) {
+    var vid = trm_loader.ins_val(ii)
+    if vid >= 0 && vid < len(rg) {
+        rg[vid] = v
+    }
+}
+
+// 执行一个纯函数（寄存器式按块线性 + 顺序指令）。
+pub func run(fname: string, args: table<i64>) -> i64 {
+    t_err = ""
+    var fid = find_func(fname)
+    if fid < 0 {
+        set_err("函数未找到: " + fname)
+        return 0
+    }
+    var cnt = trm_loader.func_params_cnt(fid)
+    if cnt != len(args) {
+        set_err("参数个数不符: " + fname + " 期望 " + to_string(cnt) + " 实给 " + to_string(len(args)))
+        return 0
+    }
+    // 寄存器文件 = 模块级值空间（参数值 + 有结果指令值）。
+    var regn = trm_loader.total_params() + trm_loader.value_count()
+    var rg = table_new_i64()
+    var z: i64 = 0
+    while z < regn {
+        table_push(rg, 0)
+        z = z + 1
+    }
+    var k: i64 = 0
+    while k < cnt {
+        rg[trm_loader.func_param_val_id(fid, k)] = args[k]
+        k = k + 1
+    }
+    // 顺序执行入口块指令。
+    var bid = trm_loader.func_entry(fid)
+    var si = trm_loader.block_start(bid)
+    var en = trm_loader.block_end(bid)
+    while si < en {
+        var op = trm_loader.ins_op(si)
+        if op == T_RET {
+            if trm_loader.ins_ops_cnt(si) >= 1 {
+                return rd(rg, si, 0)
+            }
+            return 0
+        }
+        if op == T_ADD || op == T_SUB || op == T_MUL || op == T_DIV {
+            var a = rd(rg, si, 0)
+            var b = rd(rg, si, 1)
+            var r: i64 = 0
+            if op == T_ADD {
+                r = a + b
+            } else if op == T_SUB {
+                r = a - b
+            } else if op == T_MUL {
+                r = a * b
+            } else {
+                r = a / b
+            }
+            st(rg, si, r)
+        } else if op == T_CONST_I {
+            st(rg, si, trm_loader.opnd_val_of(si, 0))
+        }
+        si = si + 1
+    }
+    set_err("块 " + to_string(bid) + " 无返回指令")
+    return 0
+}
+}

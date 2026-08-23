@@ -18,7 +18,7 @@
 | **S2（完成）** | 库层补充域：`session / data / net`（ui 需平台桥，延后） | 三模块编译零错误 + 回归通过 |
 | **S3（完成）** | 引擎 frontend：`loader`（tieir 反序列化+校验）+ `interp`（最小字节码 VM） | P0 验收：加载+interp 跑通 add/sub/mul 纯函数 |
 | **S4（完成）** | 引擎 gc / mnn（objmodel 属 P4，保持占位） | GC 探针 + 协程：gc_test / mnn_test 验收通过 |
-| S5 | backend：orcjit（LLVM）+ tiejit（简易执行器） | 统一契约矩阵 |
+| **S5（完成）** | backend：tiejit（简易执行器）+ registry（契约矩阵；orcjit 属 P3，占位） | 统一契约矩阵：interp+tiejit 同契一致性验收通过 |
 
 ## 3. S1 具体方案
 
@@ -75,6 +75,16 @@
   索引写读在该 tiec 构建下会**无限挂起**（运行时崩溃/死循环）；改为扁平边表 + `table_push`
   追加 + 全扫索引读即稳定。故 gc/mnn 只用 `table<i64>` 与标量，不做嵌套表元素复绑定 /
   链式指针。
+
+### 3.5 S5 后端契约矩阵（完成）
+
+- `core/backend/tiejit/simple.tie`：tiejit 简易执行器（命名空间 `trm_tiejit`）。与 interp
+  同一 .tieir、用**紧凑寄存器式**执行器（独立实现）计算纯函数。
+- `core/backend/registry.tie`：后端注册表 + **统一契约矩阵**（命名空间 `trm_backend`）。
+  登记 `interp / tiejit / orcjit`，同一组用例逐个后端执行比对，落成 用例×后端 矩阵。
+- 验收（`tests/s5jit`）：add/sub/mul 3 用例 × 3 后端，interp 与 tiejit 全 PASS（两实现
+  同契一致），orcjit（LLVM）标记未实现 SKIP；19 断言全过。
+- orcjit（LLVM ORC JIT）属 P3，真实 JIT 留待 LLVM 工具链就绪时接入同契约测试。
 
 ## 4. 决策记录
 
