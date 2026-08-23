@@ -1,0 +1,151 @@
+type tie<class>
+// core/mnn/mnn.tie —— M:N 协程调度器（探针，命名空间 trm_mnn）。
+// 设计对应 docs/trm-final-design.md §5：可迁移栈的协程 + M:N 调度器，栈由 GC 一并托管
+// （cooperative fan: 协程 yield → 归还 worker；worker 数 M 远小于协程数 N）。
+// 本文件是该调度器的“探针”实现（纯 tie 逻辑，可单文件编译回归）：
+//   若干轻量协程（each = step 次数上限的“体”），在固定 worker 池上多路复用推进。
+//   一个 tick 让至多 M 个就绪协程各前进一个 step（一次协作式 yield 的抽象），
+//   协程跑满 total_step 即完成；run_all 循环 tick 直至全部完成。
+// 验收：tests/s4mnn —— 5 协程 × 3 step 于 M=2 worker 多路复用，断言 done=5、步进=15、
+//   瞬时活跃 ≤2（M:N 上界）、tick 数 = ceil(15/2)。
+
+const TRM_MNN_VERSION: string = "0.1.0"
+
+// SimResult：M:N 调度模拟结果（busy_ticks = 有效调度周期，steps = 全部协程推进的步进
+// 总数，peak_running = 峰值同时运行协程数，始终 ≤ worker 池 M——即 M:N 上界）。
+struct SimResult {
+    var busy_ticks: i64 = 0
+    var steps: i64 = 0
+    var peak_running: i64 = 0
+}
+
+// 协程状态码
+const S_READY: i64 = 0
+const S_RUNNING: i64 = 1
+const S_YIELD: i64 = 2
+const S_DONE: i64 = 3
+
+// ---------- 调度器状态（并行表，协程 id 即下标） ----------
+var g_worker: i64 = 2                 // worker 池大小 M
+var g_id: table<i64>;                 // 逻辑协程 id（顺序分配）
+var g_state: table<i64>;              // 状态码
+var g_step: table<i64>;               // 已推进步数
+var g_total: table<i64>;              // 体总步数上限
+var g_rq: table<i64>;                 // 就绪队列（协程 id）
+var g_run_peak: i64 = 0               // 观测到的峰值同时运行协程数（≤ M）
+
+namespace trm_mnn {
+pub func set_workers(m: i64) {
+    if m < 1 {
+        return
+    }
+    g_worker = m
+}
+pub func workers() -> i64 {
+    return g_worker
+}
+
+// 派生一个协程体。返回协程 id。
+pub func spawn(total_step: i64) -> i64 {
+    var cid: i64 = len(g_id)
+    table_push(g_id, cid)
+    table_push(g_state, S_READY)
+    table_push(g_step, 0)
+    table_push(g_total, total_step)
+    table_push(g_rq, cid)
+    return cid
+}
+
+pub func coro_state(id: i64) -> i64 {
+    return g_state[id]
+}
+pub func coro_count() -> i64 {
+    return len(g_id)
+}
+pub func coro_done_step(id: i64) -> i64 {
+    return g_step[id]
+}
+pub func done_count() -> i64 {
+    var n: i64 = 0
+    var i: i64 = 0
+    while i < len(g_state) {
+        if g_state[i] == S_DONE {
+            n = n + 1
+        }
+        i = i + 1
+    }
+    return n
+}
+pub func active_count() -> i64 {
+    var n: i64 = 0
+    var i: i64 = 0
+    while i < len(g_state) {
+        if g_state[i] != S_DONE {
+            n = n + 1
+        }
+        i = i + 1
+    }
+    return n
+}
+
+// advance(id)：从就绪队列取一个协程推进一个 step（协作式 yield 抽象）。
+// 跑满 total_step → S_DONE；否则回到就绪队列。
+func advance(id: i64) {
+    g_state[id] = S_RUNNING
+    g_step[id] = g_step[id] + 1
+    if g_step[id] >= g_total[id] {
+        g_state[id] = S_DONE
+    } else {
+        g_state[id] = S_READY
+        table_push(g_rq, id)
+    }
+}
+
+// tick()：本调度周期至多推进 M 个就绪协程。返回推进数（0 = 无可推进）。
+pub func tick() -> i64 {
+    var n: i64 = 0
+    var cnt: i64 = 0
+    while n < g_worker && len(g_rq) > 0 {
+        var id: i64 = g_rq[0]
+        g_rq = remove_head(g_rq)
+        advance(id)
+        n = n + 1
+        cnt = cnt + 1
+    }
+    if cnt > g_run_peak {
+        g_run_peak = cnt
+    }
+    return cnt
+}
+
+// run_all()：持续 tick 直到全部完成。返回调度统计（busy_ticks 有效周期、steps 总步进、
+// peak_running 峰值并发——M:N 上界探针）。
+pub func run_all() -> SimResult {
+    var busy_ticks: i64 = 0
+    var steps: i64 = 0
+    var guard: i64 = 0
+    while active_count() > 0 && guard < 100000 {
+        var p = tick()
+        busy_ticks = busy_ticks + 1
+        steps = steps + p
+        guard = guard + 1
+    }
+    return SimResult(busy_ticks, steps, g_run_peak)
+}
+
+// 取就绪队列头并删除（无缩表原语：重建）。
+func remove_head(q: table<i64>) -> table<i64> {
+    var n = len(q)
+    var nt = table_new_i64()
+    var i: i64 = 1
+    while i < n {
+        table_push(nt, q[i])
+        i = i + 1
+    }
+    return nt
+}
+
+pub func module_version() -> string {
+    return TRM_MNN_VERSION
+}
+}

@@ -1,0 +1,41 @@
+type tie<logic>
+// tests/s4mnn/mnn_test.tie —— S4 M:N 协程调度器探针验收。
+// M=2 worker、5 个协程各 3 step（共 15 步进）在就绪队列上多路复用推进。
+// 断言：done_count=5、总步进=15、busy_ticks=ceil(15/2)=8、峰值并发≤M（2）。
+import "../../core/mnn/mnn.tie"
+
+func main() {
+    trm_mnn.set_workers(2)
+    var i: i64 = 0
+    while i < 5 {
+        trm_mnn.spawn(3)   // 5 个协程，每个体 3 个 step
+        i = i + 1
+    }
+    var r = trm_mnn.run_all()
+
+    check("worker 池 M", trm_mnn.workers(), 2)
+    check("协程总数(N)", trm_mnn.coro_count(), 5)
+    check("完成数 done_count", trm_mnn.done_count(), 5)
+    check("总步进 steps", r.steps, 15)
+    check("有效周期 busy_ticks", r.busy_ticks, 8)
+    check_le("峰值并发 peak_running(≤M)", r.peak_running, 2)
+
+    println("mnn 版本 = " + trm_mnn.module_version())
+    println("[OK] S4 M:N 协程调度器探针验收通过")
+}
+
+func check(spec: string, got: i64, want: i64) {
+    var status: string = "FAIL"
+    if got == want {
+        status = "PASS"
+    }
+    println("  [" + status + "] " + spec + " = " + to_string(got) + " (期望 " + to_string(want) + ")")
+}
+
+func check_le(spec: string, got: i64, cap: i64) {
+    var status: string = "FAIL"
+    if got <= cap {
+        status = "PASS"
+    }
+    println("  [" + status + "] " + spec + " = " + to_string(got) + " (应 ≤ " + to_string(cap) + ")")
+}

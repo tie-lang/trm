@@ -17,7 +17,7 @@
 | **S1（完成）** | 库层核心系统域：`fs / process / env / clock / terminal` | 编译零错误 + 回归通过 |
 | **S2（完成）** | 库层补充域：`session / data / net`（ui 需平台桥，延后） | 三模块编译零错误 + 回归通过 |
 | **S3（完成）** | 引擎 frontend：`loader`（tieir 反序列化+校验）+ `interp`（最小字节码 VM） | P0 验收：加载+interp 跑通 add/sub/mul 纯函数 |
-| S4 | 引擎 gc / mnn / objmodel | GC 探针 + 协程 |
+| **S4（完成）** | 引擎 gc / mnn（objmodel 属 P4，保持占位） | GC 探针 + 协程：gc_test / mnn_test 验收通过 |
 | S5 | backend：orcjit（LLVM）+ tiejit（简易执行器） | 统一契约矩阵 |
 
 ## 3. S1 具体方案
@@ -60,6 +60,21 @@
   不使用 byte 内置；待 tiec 修复后改回二进制直读。
 
 - 验收：各库文件 `tiec` 编译零错误；`main.tie` 调用各模块并输出预期结果。
+
+### 3.4 S4 引擎 gc/mnn（完成）
+
+- `core/gc/gc.tie`：统一 GC 探针（命名空间 `trm_gc`）。扁平行号表对象 + 扁平边表
+  `from/to/alive`，精确根集合 + mark-sweep。`drop_edge` 撤边 / `drop_root` 撤根构造不可达，
+  二次 `gc()` 验证只回收不可达对象（`tests/s4gc` 10 断言全过）。
+- `core/mnn/mnn.tie`：M:N 协程调度器探针（命名空间 `trm_mnn`）。固定 worker 池 M，
+  就绪队列多路复用 N 个协程，`tick` 至多推进 M 个、`run_all` 排空（`tests/s4mnn` 6 断言全过，
+  峰值并发 ≤ M 即 M:N 上界）。
+- `core/objmodel` 属 P4（反射/序列化底座），本里程碑保持占位。
+
+- **新增 tiec 后端坑（同 §3.3 类）**：链式边表（`g_head[o]→g_edge_next[node]`）的
+  索引写读在该 tiec 构建下会**无限挂起**（运行时崩溃/死循环）；改为扁平边表 + `table_push`
+  追加 + 全扫索引读即稳定。故 gc/mnn 只用 `table<i64>` 与标量，不做嵌套表元素复绑定 /
+  链式指针。
 
 ## 4. 决策记录
 

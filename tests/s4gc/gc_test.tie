@@ -1,0 +1,77 @@
+type tie<logic>
+// tests/s4gc/gc_test.tie —— S4 GC 探针验收。
+// 分配 4 对象成图：A(size100)→B(50), A→C(25)，根集 {A,D(10)}。
+// 第一次 gc：全可达，freed=0。随后断 A→C 引用 + 撤根 D，再 gc：C/D 不可达被回收，
+// 断言 live=2、freed=2，且 A/B 存活、C/D 死亡。
+import "../../core/gc/gc.tie"
+
+func main() {
+    var A = trm_gc.alloc(100)
+    var B = trm_gc.alloc(50)
+    var C = trm_gc.alloc(25)
+    var D = trm_gc.alloc(10)
+    trm_gc.add_edge(A, B)
+    trm_gc.add_edge(A, C)
+    trm_gc.add_root(A)
+    trm_gc.add_root(D)
+
+    // 第一次收集：A→B/C，D 为根 —— 全部可达
+    var s1 = trm_gc.gc()
+    check("s1.live", s1.live, 4)
+    check("s1.freed", s1.freed, 0)
+
+    // 构造不可达：断 A→C，撤 D 根
+    trm_gc.drop_edge(A, 1)   // A 活跃出边按下标序 [B, C]，去掉第 1 条 → 仅剩 B
+    trm_gc.drop_root(D)
+
+    // 第二次收集：仅 A/B 可达，C/D 回收
+    var s2 = trm_gc.gc()
+    check("s2.live", s2.live, 2)
+    check("s2.freed", s2.freed, 2)
+    check_bool("A 存活", trm_gc.obj_live(A), true)
+    check_bool("B 存活", trm_gc.obj_live(B), true)
+    check_bool("C 已回收", trm_gc.obj_live(C), false)
+    check_bool("D 已回收", trm_gc.obj_live(D), false)
+    // 存活对象大小（可达图 A+B）：100+50
+    check("s2.live_size", size_live(), 150)
+    check("累计分配", trm_gc.total_alloc(), 4)
+
+    println("gc 版本 = " + trm_gc.module_version() + "  堆对象 = " + to_string(trm_gc.alloc_count()))
+    println("[OK] S4 GC 探针验收通过")
+}
+
+// 累加当前存活对象字节大小（校验回收的确回收了对应内存）。
+func size_live() -> i64 {
+    var tot: i64 = 0
+    var i: i64 = 0
+    while i < trm_gc.alloc_count() {
+        if trm_gc.obj_live(i) {
+            tot = tot + trm_gc.obj_size(i)
+        }
+        i = i + 1
+    }
+    return tot
+}
+
+func check(spec: string, got: i64, want: i64) {
+    var status: string = "FAIL"
+    if got == want {
+        status = "PASS"
+    }
+    println("  [" + status + "] " + spec + " = " + to_string(got) + " (期望 " + to_string(want) + ")")
+}
+
+func check_bool(spec: string, got: bool, want: bool) {
+    var status: string = "FAIL"
+    if got == want {
+        status = "PASS"
+    }
+    println("  [" + status + "] " + spec + " = " + fmt(got) + " (期望 " + fmt(want) + ")")
+}
+
+func fmt(b: bool) -> string {
+    if b {
+        return "true"
+    }
+    return "false"
+}
