@@ -1,15 +1,57 @@
 type tie<logic>
+// main.tie：trm 库层基础功能回归/demo。
+// 依次调用 fs/process/env/clock/terminal 各模块，验证编译零错误 + 运行结果。
 
-// trm（tie runtime suite）入口
-// 现状：项目骨架初始化阶段。开发者不 import trm = 走纯编译路线 A（零依赖）；
-// import trm = 走路线 B（tieir 字节码 + trm 引擎执行）。
-// 权威设计见 docs/designs/trm-final-design.md
+import "./lib/fs.tie"
+import "./lib/process.tie"
+import "./lib/env.tie"
+import "./lib/clock.tie"
+import "./lib/terminal.tie"
 
-const VERSION: string = "0.1.0"
+// trm 整体发行版本号（主/次/补丁；各模块版本独立见各 lib/x.tie 的 module_version）。
+const TRM_VERSION: string = "0.1.0"
 
 func main() {
-    println("trm = tie 平台的运行时套件")
-    println("路线 A：纯编译（零依赖，安全默认）")
-    println("路线 B：trm 运行时（GC / M:N / 反射 / 动态加载）")
-    println("trm version: " + VERSION)
+    trm_terminal.info("trm 库层基础功能回归")
+    trm_terminal.info("trm 发行版本 = " + TRM_VERSION
+        + "  |  fs=" + trm_fs.module_version()
+        + "  process=" + trm_process.module_version()
+        + "  env=" + trm_env.module_version()
+        + "  clock=" + trm_clock.module_version()
+        + "  terminal=" + trm_terminal.module_version())
+
+    // --- fs：写 → 读 → 删 ---
+    var p = ".trm_demo.txt"
+    var wrote = trm_fs.write(p, "hello trm")
+    var back = trm_fs.read_text(p)
+    trm_terminal.info("fs.write=" + fmt_bool(wrote) + "  read=" + back)
+    var removed = trm_fs.remove_file(p)
+    trm_terminal.info("fs.remove_file=" + fmt_bool(removed) + "  exists=" + fmt_bool(trm_fs.exists(p)))
+
+    // --- process：退出码 + 捕获输出 ---
+    var exit_code = trm_process.exec("echo hi > NUL")
+    var out = trm_process.output("echo trm-out")
+    trm_terminal.info("process.code=" + to_string(exit_code) + "  out=" + out)
+
+    // --- env：环境变量 + 工作目录 ---
+    var cwd = trm_env.cwd()
+    var plen: i64 = len(trm_env.get("PATH"))
+    trm_terminal.info("env.cwd=" + cwd + "  PATH_len=" + to_string(plen))
+
+    // --- clock：时间戳与延时 ---
+    var t0 = trm_clock.now_ms()
+    trm_clock.delay_ms(1)
+    var dt = trm_clock.now_ms() - t0
+    trm_terminal.info("clock.now=" + to_string(trm_clock.now()) + "  elapsed_ms=" + to_string(dt))
+
+    // --- terminal：日志辅助 ---
+    trm_terminal.ok("库层基础功能回归通过")
+}
+
+// bool → "true"/"false"（to_string 对 bool 的显示不可靠，单独格式化）。
+func fmt_bool(b: bool) -> string {
+    if b {
+        return "true"
+    }
+    return "false"
 }

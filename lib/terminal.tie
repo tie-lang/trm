@@ -1,0 +1,49 @@
+type tie<class>
+// lib/terminal.tie：trm 库层⑤ 终端（命名空间 trm_terminal）。
+// S1 基础面：行输出/日志辅助层（基于 println 内置）。
+// 注意：ANSI 转义 / TTY 原始模式 / 键读取依赖平台桥，S1 延后（见 ROADMAP）。
+// 调用：import 后 trm_terminal.info("msg") / trm_terminal.line("msg")。
+
+// trm.terminal 模块版本号（各模块独立版本化）。
+const TRM_TERMINAL_VERSION: string = "0.1.0"
+
+namespace trm_terminal {
+// ---------- 模块版本 ----------
+pub func module_version() -> string {
+    return TRM_TERMINAL_VERSION
+}
+
+// ---------- 终端 ----------
+pub func line(msg: string) {
+    println(msg)
+}
+
+// 带 [INFO] 前缀的日志输出。
+pub func info(msg: string) {
+    println("[INFO]  " + msg)
+}
+
+// 带 [OK] 前缀的日志输出（常用于验收通过）。
+pub func ok(msg: string) {
+    println("[OK]    " + msg)
+}
+
+// 带 [WARN] 前缀的日志输出。
+pub func warn(msg: string) {
+    println("[WARN]  " + msg)
+}
+
+// 带 [ERR] 前缀的日志输出（不退出）。
+pub func error(msg: string) {
+    println("[ERR]   " + msg)
+}
+
+// 输出 n 行空行（视觉分节）；n 为负或零则无操作。
+pub func blank(n: i64) {
+    var i: i64 = 0
+    while i < n {
+        println("")
+        i = i + 1
+    }
+}
+}

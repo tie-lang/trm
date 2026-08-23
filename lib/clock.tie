@@ -1,0 +1,47 @@
+type tie<class>
+// lib/clock.tie：trm 库层④ 时钟/计时（命名空间 trm_clock）。
+// 包装 std/time（Unix 纪元秒原语）+ 忙等延时。
+// 注意：time_now 单位是秒，毫秒换算由模块统一。
+// 调用：import 后 trm_clock.now() / trm_clock.now_ms() / trm_clock.delay_ms(100)。
+import "../stdlib/time.tie"
+
+// trm.clock 模块版本号（各模块独立版本化）。
+const TRM_CLOCK_VERSION: string = "0.1.0"
+
+namespace trm_clock {
+// ---------- 模块版本 ----------
+pub func module_version() -> string {
+    return TRM_CLOCK_VERSION
+}
+
+// ---------- 时钟 ----------
+pub func now() -> i64 {
+    return time.now()
+}
+
+// 当前 Unix 纪元毫秒数（秒 × 1000）。
+pub func now_ms() -> i64 {
+    return time.now_ms()
+}
+
+// 秒 → 毫秒换算（单位语义显式）。
+pub func seconds(s: i64) -> i64 {
+    return time.seconds(s)
+}
+
+// 从起点（Unix 纪元秒）到当前的毫秒数；起点在未来则返回负值。
+pub func elapsed_ms(start: i64) -> i64 {
+    return time.elapsed_ms(start)
+}
+
+// 忙等延时 ms 毫秒（无 sleep 原语时的朴素实现；毫秒为整秒换算的近似）。
+// 精度受 time_now 秒粒度限制：实际停顿会向上取整到秒边界。
+pub func delay_ms(ms: i64) {
+    var end = time.now_ms() + ms
+    while time.now_ms() < end {
+        // 忙等待至目标时刻
+        var tick = time.now_ms()
+        tick = tick
+    }
+}
+}

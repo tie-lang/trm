@@ -1,0 +1,31 @@
+type tie<class>
+// lib/process.tie：trm 库层② 进程（命名空间 trm_process）。
+// 包装 std/process：libc system 桥 + 重定向捕获输出。零运行时依赖。
+// 调用：import 后 trm_process.exec("...") / trm_process.output("...")。
+import "../stdlib/process.tie"
+
+// trm.process 模块版本号（各模块独立版本化）。
+const TRM_PROCESS_VERSION: string = "0.1.0"
+
+namespace trm_process {
+// ---------- 模块版本 ----------
+pub func module_version() -> string {
+    return TRM_PROCESS_VERSION
+}
+
+// ---------- 进程 ----------
+pub func exec(cmd: string) -> i32 {
+    return process.exec_code(cmd)
+}
+
+// 执行命令并返回全部输出（stdout + stderr 合并；输出为空返回空串）。
+// 失败场景（命令不存在等）返回空串。
+pub func output(cmd: string) -> string {
+    return process.exec_output(cmd)
+}
+
+// 断言命令成功执行（退出码 0），否则返回假；不抛错、尽力而为。
+pub func run_ok(cmd: string) -> bool {
+    return process.exec_code(cmd) == 0
+}
+}

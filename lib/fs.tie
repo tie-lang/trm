@@ -1,0 +1,107 @@
+type tie<class>
+// lib/fs.tie：trm 库层① 文件系统（命名空间 trm_fs）。
+// 包装 std/fs 的标准实现（vendored 在 stdlib/），对外暴露统一 trm.* 命名面。
+// 底层 UTF-8 安全桥：中文/Unicode 路径天然支持（Windows 走宽字符 API）。
+// 调用：import 后 trm_fs.read_text(...) / trm_fs.exists(...)。
+// 注意：import 路径相对当前文件解析，故写 "../stdlib/..."。
+import "../stdlib/fs.tie"
+
+// trm.fs 模块版本号（各模块独立版本化）。
+const TRM_FS_VERSION: string = "0.1.0"
+
+namespace trm_fs {
+// ---------- 模块版本 ----------
+pub func module_version() -> string {
+    return TRM_FS_VERSION
+}
+
+// ---------- 读取 ----------
+// 读取文本文件全部内容。空串可能表示"空文件或失败"，精确判断先用 exists()。
+pub func read_text(path: string) -> string {
+    return fs.read_to_string(path)
+}
+
+// 读取文件原始字节（元素 i64，值域 0..255）；失败返回空表。
+pub func read_bytes(path: string) -> table<i64> {
+    return fs.read_bytes(path)
+}
+
+// 按行读取文本文件（去行尾 \r\n）；空文件返回空表。
+pub func read_lines(path: string) -> table<string> {
+    return fs.read_lines(path)
+}
+
+// ---------- 写入 ----------
+// 覆盖写入文本文件；成功返回 true。
+pub func write(path: string, content: string) -> bool {
+    return fs.write(path, content)
+}
+
+// 多行写入：lines 逐行以 \n 连接覆盖写入（末行不带换行）。
+pub func write_lines(path: string, lines: table<string>) -> bool {
+    return fs.write_lines(path, lines)
+}
+
+// 追加文本到文件末尾（不存在则创建）；成功返回 true。
+pub func append(path: string, content: string) -> bool {
+    return fs.append(path, content)
+}
+
+// ---------- 元数据 ----------
+// 路径是否存在。
+pub func exists(path: string) -> bool {
+    return fs.exists(path)
+}
+
+// 是否为普通文件。
+pub func is_file(path: string) -> bool {
+    return fs.is_file(path)
+}
+
+// 是否为目录。
+pub func is_dir(path: string) -> bool {
+    return fs.is_dir(path)
+}
+
+// 文件字节大小；缺失/目录返回 -1。
+pub func size(path: string) -> i64 {
+    return fs.size(path)
+}
+
+// ---------- 目录 ----------
+// 递归创建目录（含中间层级）；已存在亦成功。
+pub func create_dir_all(path: string) -> bool {
+    return fs.create_dir_all(path)
+}
+
+// 列出目录直接条目（文件名，不含前缀）；失败返回空表。
+pub func read_dir(path: string) -> table<string> {
+    return fs.read_dir(path)
+}
+
+// 递归遍历目录，返回全部路径；失败返回空表。
+pub func walk(path: string) -> table<string> {
+    return fs.walk(path)
+}
+
+// ---------- 复制 / 移动 / 删除 ----------
+// 复制文件 src → dst；成功返回 true。
+pub func copy(src: string, dst: string) -> bool {
+    return fs.copy(src, dst)
+}
+
+// 移动/重命名文件 src → dst；成功返回 true。
+pub func rename(src: string, dst: string) -> bool {
+    return fs.rename(src, dst)
+}
+
+// 删除文件；成功返回 true（不存在返回 false）。
+pub func remove_file(path: string) -> bool {
+    return fs.remove_file(path)
+}
+
+// 递归删除目录及全部内容；成功返回 true。
+pub func remove_dir_all(path: string) -> bool {
+    return fs.remove_dir_all(path)
+}
+}
