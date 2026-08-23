@@ -18,7 +18,7 @@
 | **S2（完成）** | 库层补充域：`session / data / net`（ui 需平台桥，延后） | 三模块编译零错误 + 回归通过 |
 | **S3（完成）** | 引擎 frontend：`loader`（tieir 反序列化+校验）+ `interp`（最小字节码 VM） | P0 验收：加载+interp 跑通 add/sub/mul 纯函数 |
 | **S4（完成）** | 引擎 gc / mnn（objmodel 属 P4，保持占位） | GC 探针 + 协程：gc_test / mnn_test 验收通过 |
-| **S5（完成）** | backend：tiejit（简易执行器）+ registry（契约矩阵；orcjit 属 P3，占位） | 统一契约矩阵：interp+tiejit 同契一致性验收通过 |
+| **S5（完成）** | backend：tiejit（简易执行器）+ orcjit（独立 LLVM-MCJIT 驱动进程）+ registry（契约矩阵） | 统一契约矩阵：interp/tiejit/orcjit 三端同契一致性验收通过 |
 
 ## 3. S1 具体方案
 
@@ -84,7 +84,11 @@
   登记 `interp / tiejit / orcjit`，同一组用例逐个后端执行比对，落成 用例×后端 矩阵。
 - 验收（`tests/s5jit`）：add/sub/mul 3 用例 × 3 后端，interp 与 tiejit 全 PASS（两实现
   同契一致），orcjit（LLVM）标记未实现 SKIP；19 断言全过。
-- orcjit（LLVM ORC JIT）属 P3，真实 JIT 留待 LLVM 工具链就绪时接入同契约测试。
+- **orcjit 接入（S5b）**：新增独立 LLVM-MCJIT 驱动进程（`orcjit.c` + `build-orcjit.ps1`，
+  用 D:\LLVM 的 LLVM-C 现场构造 i64 二元函数模块并真 JIT），tie 侧 `trm_orcjit`（`jit.tie`）
+  读 tieir op → 调驱动 → 解析输出。契约矩阵升级为**三端全 PASS、无 SKIP**（18 断言全过）。
+- orcjit 用进程边界桥（tiec 无附加链接库/原始函数指针，进程内桥 LLVM 风险过高）；
+  完整 tieir→LLVM IR 降级与进程内 JITLink 留待 P3。
 
 ## 4. 决策记录
 

@@ -13,4 +13,6 @@
 - 引擎 mnn（S4）：`trm_mnn` M:N 协程调度器探针（固定 worker 池多路复用）。
 - 引擎 backend（S5）：`trm_tiejit` 简易执行器 + `trm_backend` 统一契约矩阵
   （interp/tiejit 同契一致；orcjit 占位待实现）。
-- 记录 tiec 后端坑：链式/嵌套表元素复绑定易崩溃或挂起，S4 起统一用扁平 `table<i64>` 规避。
+- 引擎 orcjit（S5b）：独立 LLVM-MCJIT 驱动进程接入 `trm_orcjit`，契约矩阵**三后端
+  （interp/tiejit/orcjit）同契全 PASS、无 SKIP**。
+- 记录 tiec 后端坑：链式/嵌套表元素复绑定易崩溃或挂起，S4 起统一用扁平 `table<i64>` 规避；S5b 又见库 TU 内 `break` 解析怪癖，改无换行输出 + 免 break 解析规避。

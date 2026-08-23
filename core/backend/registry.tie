@@ -4,10 +4,11 @@ type tie<class>
 //   多实现（interp / tiejit / orcjit…）实现同一合同，跑同一组用例，输出须一致。
 // 本文件为“统一契约矩阵”探针：登记各后端（可执行/占位），对同一 .tieir 的一组纯函数
 //   用例，逐个后端执行比对期望，落成 用例×后端 的 PASS/FAIL/SKIP 矩阵。
-// 后端表：0=interp（基准）、1=tiejit（简易执行器）、2=orcjit（LLVM，未实现占位）。
+// 后端表：0=interp（基准）、1=tiejit（简易执行器）、2=orcjit（LLVM MCJIT 真 JIT）。
 // 调用：setup() 登记 → add_case() 加用例 → run_matrix() 求解 → report()/cell_* 断言。
 import "../frontend/interp.tie"
 import "./tiejit/simple.tie"
+import "./orcjit/jit.tie"
 
 // 矩阵 cell 状态码：1=PASS，2=FAIL，0=SKIP（后端未实现）。
 const ST_PASS: i64 = 1
@@ -43,7 +44,7 @@ pub func setup() {
     }
     table_push(b_name, "interp"); table_push(b_stat, 1)
     table_push(b_name, "tiejit"); table_push(b_stat, 1)
-    table_push(b_name, "orcjit"); table_push(b_stat, 0)   // LLVM ORC 尚未实现
+    table_push(b_name, "orcjit"); table_push(b_stat, 1)   // LLVM MCJIT 驱动（需先 build-orcjit.ps1）
     b_pass = table_new_i64(); table_push(b_pass, 0); table_push(b_pass, 0); table_push(b_pass, 0)
     b_fail = table_new_i64(); table_push(b_fail, 0); table_push(b_fail, 0); table_push(b_fail, 0)
     c_name = table_new_string(); c_a = table_new_i64(); c_b = table_new_i64()
@@ -85,7 +86,10 @@ func run_one(ci: i64, bi: i64) -> i64 {
     if bi == 0 {
         return trm_interp.run(c_name[ci], args)
     }
-    return trm_tiejit.run(c_name[ci], args)
+    if bi == 1 {
+        return trm_tiejit.run(c_name[ci], args)
+    }
+    return trm_orcjit.run(c_name[ci], args)
 }
 
 // 求解整个契约矩阵。
