@@ -22,6 +22,7 @@
 | **S6（完成）** | 引擎 objmodel（对象模型/反射底座） | 运行时类型查询 + 自动序列化 + 跨域身份，tests/s6obj 验收 |
 | **S7（完成）** | 运行时内省诊断（diag） | 统一诊断快照 + 内省自检，tests/s7diag 验收 |
 | **S8（完成）** | 动态加载 + 模块生命周期（module 注册表） | load/内省/invoke/unload 生命周期，tests/s8mod 验收 |
+| **S9（完成）** | AOT 前端（tieir → LLVM IR → 原生编译执行） | llc/clang 原生执行与 interp 契约一致，tests/s9aot 验收 |
 
 ## 3. S1 具体方案
 
@@ -118,6 +119,14 @@
 - `tests/s8mod/gen3.tie` 生成新资产 `calc2.tieir`（`double(n)=n*2`，const_i+mul）。
 - 验收（`tests/s8mod`）：加载两模块、内省、动态调用、卸载/复活，19 断言全过。
   P4「动态加载 tieir」落地。
+
+### 3.9 S9 AOT 前端（完成）
+
+- `core/aot/aot.tie`（`trm_aot`）：tieir → LLVM IR 降级（`lift_ir`）+ llc 校验（`verify_ir`）
+  + 端到端原生编译执行（`aot_execute`：降级→llc -filetype=obj→clang 链接→运行→回灌）。
+- 依赖 D:\LLVM（llc/clang），经 `process`/`fs` 桥；产物写 `%TEMP%\trm-aot`（不入库）。
+- 验收（`tests/s9aot`）：add/sub/mul 各 5 断言全过（AOT 执行==期望，且 AOT 结果== interp，
+  与 orcjit JIT 同为「interp 基准 + 契约一致」）。完整 IR 降级留待 P3 深化。
 
 ## 4. 决策记录
 

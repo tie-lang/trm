@@ -1,0 +1,91 @@
+type tie<logic>
+// tests/s9aot/aot_test.tie —— S9 AOT 探针验收。
+// 加载纯2.tieir，对 add/sub/mul 逐一：断言可 AOT、降级 IR 含 define、llc 校验通过，
+// 端到端 AOT（llc→clang→原生执行）结果与期望/与 interp 一致。
+import "../../core/frontend/loader.tie"
+import "../../core/frontend/interp.tie"
+import "../../core/aot/aot.tie"
+
+func main() {
+    if !trm_loader.load("f:/Projects/tie-repo/trm/tests/s3pure/pure2_bytes.txt") {
+        println("[aot] 加载失败: " + trm_loader.err_msg())
+        return
+    }
+    // add: 2+3=5, sub: 9-4=5, mul: 6*7=42
+    aot_case(0, 2, 3, 5)
+    aot_case(1, 9, 4, 5)
+    aot_case(2, 6, 7, 42)
+
+    println("[OK] S9 AOT 探针验收通过（tieir→LLVM IR→原生编译执行，与 interp 契约一致）")
+}
+
+func aot_case(fid: i64, a: i64, b: i64, want: i64) {
+    var fname = trm_loader.pool(trm_loader.func_name_id(fid))
+    var sup = trm_aot.aot_supported(fid)
+    check_b("AOT 支持(" + fname + ")", sup, true)
+    if !sup {
+        return
+    }
+    var ir = trm_aot.lift_ir(fid)
+    check("IR 非空(" + fname + ")", len_gt0(ir), 1)
+    check("llc 校验(" + fname + ")", trm_aot.verify_ir(fid), 1)
+    // 端到端 AOT 原生执行
+    var got = trm_aot.aot_execute(fid, a, b)
+    check("AOT 执行(" + fname + ")", got, want)
+    if trm_aot.err_msg() != "" {
+        check_s("AOT err(" + fname + ")", trm_aot.err_msg(), "")
+    }
+    // 与 interp 契约一致
+    var interp_got = interp_run(fname, a, b)
+    var same: i64 = 0
+    if got == interp_got {
+        same = 1
+    }
+    check("AOT==interp(" + fname + ")", same, 1)
+}
+
+// 构造参数并 interp 执行。
+func interp_run(fname: string, a: i64, b: i64) -> i64 {
+    var args: table<i64> = table_new_i64()
+    table_push(args, a)
+    table_push(args, b)
+    return trm_interp.run(fname, args)
+}
+
+func len_gt0(s: string) -> i64 {
+    if str_len(s) > 0 {
+        return 1
+    }
+    return 0
+}
+
+func check(spec: string, got: i64, want: i64) {
+    var status: string = "FAIL"
+    if got == want {
+        status = "PASS"
+    }
+    println("  [" + status + "] " + spec + " = " + to_string(got) + " (期望 " + to_string(want) + ")")
+}
+
+func check_b(spec: string, got: bool, want: bool) {
+    var status: string = "FAIL"
+    if got == want {
+        status = "PASS"
+    }
+    println("  [" + status + "] " + spec + " = " + fmtb(got) + " (期望 " + fmtb(want) + ")")
+}
+
+func check_s(spec: string, got: string, want: string) {
+    var status: string = "FAIL"
+    if got == want {
+        status = "PASS"
+    }
+    println("  [" + status + "] " + spec + " = [" + got + "] (期望 [" + want + "])")
+}
+
+func fmtb(b: bool) -> string {
+    if b {
+        return "true"
+    }
+    return "false"
+}

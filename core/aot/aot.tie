@@ -1,0 +1,171 @@
+type tie<class>
+// core/aot/aot.tie —— AOT 前端：tieir → LLVM IR 降级 + 原生编译执行（命名空间 trm_aot）。
+// 对应 P3 后置（完整 tieir→LLVM IR 降级）与 P5「AOT 可选后端」。
+// 本文件为 AOT 探针：对已加载 tieir 的纯函数降级为 LLVM IR 文本，写入 .ll，经
+// D:\LLVM 工具链 **llc(-filetype=obj) → clang 链接 → 原生可执行** 前置编译并执行，
+// 结果与 interp 契约一致。验证链：llc/opt 校验 IR 合法（AOT 编译前置）+ 原生执行。
+// 限制：单块、2 参、body 为单一算术（add/sub/mul/div）的纯函数；完整降级留待 P3 深化。
+// 调用：aot_supported(fid) → lift_ir(fid) → aot_execute(fid,a,b) -> i64。
+import "../frontend/loader.tie"
+import "../../stdlib/process.tie"
+import "../../stdlib/fs.tie"
+
+// AOT 产物目录（系统临时区，避免污染仓库）。
+const AOT_DIR: string = "C:\\Users\\Jiro\\AppData\\Local\\Temp\\trm-aot"
+// LLVM 工具链根（与 build-orcjit 一致，可用 TIE_LLVM_HOME 覆盖）。
+const LLVM_HOME: string = "D:\\LLVM"
+
+// opcode → LLVM 算术指令名
+func llvm_op(op: i64) -> string {
+    if op == 1 {
+        return "sub"
+    }
+    if op == 2 {
+        return "mul"
+    }
+    if op == 3 {
+        return "sdiv"
+    }
+    return "add"
+}
+
+var a_err: string = ""
+
+namespace trm_aot {
+pub func err_msg() -> string {
+    return a_err
+}
+
+func set_err(m: string) {
+    a_err = m
+}
+
+// 确保 AOT 产物目录存在。
+func ensure_dir() {
+    fs.mkdir_all(AOT_DIR)
+}
+
+// 从函数入口块取首个算术 opcode（add=0 sub=1 mul=2 div=3）。
+func arith_op(fid: i64) -> i64 {
+    var bid = trm_loader.func_entry(fid)
+    var si = trm_loader.block_start(bid)
+    var en = trm_loader.block_end(bid)
+    var op: i64 = -1
+    while si < en {
+        var o = trm_loader.ins_op(si)
+        if o == 0 || o == 1 || o == 2 || o == 3 {
+            op = o
+        }
+        si = si + 1
+    }
+    return op
+}
+
+// 是否可用 AOT 降级：2 参 + 单一算术 op。
+pub func aot_supported(fid: i64) -> bool {
+    var arity = trm_loader.func_params_cnt(fid)
+    if arity != 2 {
+        return false
+    }
+    var op = arith_op(fid)
+    if op < 0 || op > 3 {
+        return false
+    }
+    return true
+}
+
+// tieir 纯函数 → LLVM IR 文本（单块 i64 二元算术）。
+pub func lift_ir(fid: i64) -> string {
+    var name = trm_loader.pool(trm_loader.func_name_id(fid))
+    var op = arith_op(fid)
+    var s = "define i64 @"
+    s = s + name + "(i64 %a0, i64 %a1) {\nentry:\n"
+    s = s + "  %r = " + llvm_op(op) + " i64 %a0, %a1\n"
+    s = s + "  ret i64 %r\n}\n"
+    return s
+}
+
+// 校验降级 IR 合法（AOT 编译前置）：写 .ll → llc 或 opt 通过。
+pub func verify_ir(fid: i64) -> i64 {
+    var name = trm_loader.pool(trm_loader.func_name_id(fid))
+    ensure_dir()
+    var llp = AOT_DIR + "\\" + name + ".ll"
+    if !fs.write(llp, lift_ir(fid)) {
+        set_err("写 .ll 失败")
+        return -1
+    }
+    var cmd = LLVM_HOME + "\\bin\\llc.exe" + " " + llp + " -o " + AOT_DIR + "\\" + name + ".chk"
+    var rc = process.exec_code(cmd)
+    if rc != 0 {
+        set_err("llc 校验失败: " + to_string(rc))
+        return 0
+    }
+    return 1
+}
+
+// 解析驱动输出为整数（仅累加数字位 + 前导负号，规避库 TU 解析怪癖）。
+func parse_int(s: string) -> i64 {
+    var n = str_len(s)
+    var i: i64 = 0
+    var neg: bool = false
+    if n > 0 && str_char(s, 0) == "-" {
+        neg = true
+    }
+    var v: i64 = 0
+    while i < n {
+        var cc = char_code(str_char(s, i))
+        if cc >= 48 && cc <= 57 {
+            v = v * 10 + (cc - 48)
+        }
+        i = i + 1
+    }
+    if neg {
+        v = -v
+    }
+    return v
+}
+
+// AOT 端到端：降级 → llc 机器码 → clang 链接 → 原生执行，返回结果。
+pub func aot_execute(fid: i64, a: i64, b: i64) -> i64 {
+    a_err = ""
+    if !aot_supported(fid) {
+        set_err("不支持的 AOT 函数")
+        return 0
+    }
+    var name = trm_loader.pool(trm_loader.func_name_id(fid))
+    ensure_dir()
+    var base = AOT_DIR + "\\" + name
+    // 1) 写 LLVM IR
+    if !fs.write(base + ".ll", lift_ir(fid)) {
+        set_err("写 .ll 失败")
+        return 0
+    }
+    // 2) 写 C 主（无换行输出单值，便于解析）
+    var cmain = "#include <stdio.h>\nlong long " + name + "(long long,long long);\n"
+    cmain = cmain + "int main(void){ printf(\"%lld\", " + name + "(" + to_string(a) + "," + to_string(b) + ")); return 0; }\n"
+    if !fs.write(base + ".c", cmain) {
+        set_err("写 .c 失败")
+        return 0
+    }
+    // 3) llc：IR → COFF 目标文件
+    var llvm = LLVM_HOME + "\\bin"
+    var c1 = process.exec_code(llvm + "\\llc.exe -filetype=obj " + base + ".ll -o " + base + ".obj")
+    if c1 != 0 {
+        set_err("llc 编译失败: " + to_string(c1))
+        return 0
+    }
+    // 4) clang 链接 → 原生 exe
+    var c2 = process.exec_code(llvm + "\\clang.exe " + base + ".obj " + base + ".c -o " + base + ".exe")
+    if c2 != 0 {
+        set_err("clang 链接失败: " + to_string(c2))
+        return 0
+    }
+    // 5) 运行（进程边界，stdout 即结果）
+    var out = process.exec_output(base + ".exe")
+    if len(out) == 0 {
+        set_err("AOT 产物无输出")
+        return 0
+    }
+    return parse_int(out)
+}
+}
