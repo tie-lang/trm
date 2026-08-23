@@ -1,0 +1,113 @@
+type tie<class>
+// lib/session.tie：trm 库层⑥ 会话（命名空间 trm_session）。
+// 管理 ~/.tie/ 下的配置/profile/历史（设计 §4.1 session 域）。
+// 存储约定：config_dir = ~/.tie/；profile 存于 profile 文件（key=value 逐行）；
+// 历史存于 history 文件（逐行，追加写）。
+// 包装 std/fs + std/path + 内置 get_env。
+// 调用：import 后 trm_session.home_dir() / trm_session.profile_get("k")。
+import "../stdlib/fs.tie"
+import "../stdlib/path.tie"
+
+// trm.session 模块版本号（各模块独立版本化）。
+const TRM_SESSION_VERSION: string = "0.1.0"
+
+namespace trm_session {
+// ---------- 模块版本 ----------
+pub func module_version() -> string {
+    return TRM_SESSION_VERSION
+}
+
+// ---------- 目录 ----------
+// 用户主目录：优先 USERPROFILE（Windows），回退 HOME；均未设置返回空串。
+func home_dir() -> string {
+    var u = get_env("USERPROFILE")
+    if len(u) > 0 {
+        return u
+    }
+    return get_env("HOME")
+}
+
+// ~/.tie 配置根目录（不创建；1 - ensure_exists 后可用）。
+pub func config_dir() -> string {
+    return path.join(home_dir(), ".tie")
+}
+
+// 确保 config_dir 存在（递归创建）；成功返回 true。
+pub func ensure_config() -> bool {
+    return fs.create_dir_all(config_dir())
+}
+
+// ---------- profile ----------
+// profile 文件绝对路径：~/.tie/profile（key=value 逐行）。
+func profile_file() -> string {
+    return path.join(config_dir(), "profile")
+}
+
+// 读取 profile 中 key 的值；不存在返回空串。
+pub func profile_get(key: string) -> string {
+    var lines = fs.read_lines(profile_file())
+    var n: i64 = len(lines)
+    var i: i64 = 0
+    while i < n {
+        var line = lines[i]
+        var eq: i64 = 0
+        // 找第一个 '='
+        var found: bool = false
+        var j: i64 = 0
+        while j < len(line) {
+            if str_char(line, j) == "=" {
+                eq = j
+                found = true
+            }
+            if found {
+                j = len(line)
+            } else {
+                j = j + 1
+            }
+        }
+        if found {
+            var k = line_slice(line, 0, eq)
+            if k == key {
+                return line_slice(line, eq + 1, len(line))
+            }
+        }
+        i = i + 1
+    }
+    return ""
+}
+
+// 写入 profile key=value（追加一行；重复键不清重，读取以首个为准）。
+// 需 config_dir 已存在；成功返回 true。
+pub func profile_set(key: string, value: string) -> bool {
+    ensure_config()
+    return fs.append(profile_file(), key + "=" + value + "\n")
+}
+
+// ---------- 历史 ----------
+// 追加一条历史记录到 ~/.tie/history。成功返回 true。
+pub func history_append(line: string) -> bool {
+    ensure_config()
+    return fs.append(path.join(config_dir(), "history"), line + "\n")
+}
+
+// 读取全部历史记录（逐行，去行尾）；不存在返回空表。
+pub func history_read() -> table<string> {
+    var f = path.join(config_dir(), "history")
+    if fs.exists(f) {
+        return fs.read_lines(f)
+    }
+    return table_new_string()
+}
+
+// ---------- 内部辅助 ----------
+// 取字符串 [start, end) 子串（码点级），避免引入 std/string。
+func line_slice(s: string, start: i64, end: i64) -> string {
+    var out: string = ""
+    var i: i64 = start
+    while i < end {
+        out = out + str_char(s, i)
+        i = i + 1
+    }
+    return out
+}
+}

@@ -1,0 +1,64 @@
+type tie<class>
+// lib/net.tie：trm 库层⑧ 网络（命名空间 trm_net）。
+// TCP/UDP socket 封装（包装 std/net，底层为 net_* 桥内置，C ABI）。
+// 句柄模型：i64 id（0 哨兵；-1 失败）；阻塞语义；成功返回 true 等见各函数。
+// 调用：import 后 trm_net.tcp_listen(8080) / trm_net.tcp_recv(h, 4096)。
+import "../stdlib/net.tie"
+
+// trm.net 模块版本号（各模块独立版本化）。
+const TRM_NET_VERSION: string = "0.1.0"
+
+namespace trm_net {
+// ---------- 模块版本 ----------
+pub func module_version() -> string {
+    return TRM_NET_VERSION
+}
+
+// ---------- TCP ----------
+// 监听 0.0.0.0:prt，返回监听句柄（失败 -1）。
+pub func tcp_listen(prt: i64) -> i64 {
+    return net.tcp_listen(prt)
+}
+
+// 接受一个连接（阻塞），返回连接句柄（失败 -1）。
+pub func tcp_accept(handle: i64) -> i64 {
+    return net.tcp_accept(handle)
+}
+
+// 连接远端 host:prt，返回连接句柄（失败 -1）。
+pub func tcp_connect(host: string, prt: i64) -> i64 {
+    return net.tcp_connect(host, prt)
+}
+
+// 发送数据（阻塞写完），返回发送字节数（失败 -1）。
+pub func tcp_send(handle: i64, data: string) -> i64 {
+    return net.tcp_send(handle, data)
+}
+
+// 接收数据（最多 max 字节，阻塞），返回字符串；对端关闭返回空串。
+pub func tcp_recv(handle: i64, max: i64) -> string {
+    return net.tcp_recv(handle, max)
+}
+
+// ---------- UDP ----------
+// 绑定本地端口，返回套接字句柄（失败 -1）。
+pub func udp_bind(prt: i64) -> i64 {
+    return net.udp_bind(prt)
+}
+
+// 发送数据报（host:prt），返回发送字节数（失败 -1）。
+pub func udp_send(handle: i64, host: string, prt: i64, data: string) -> i64 {
+    return net.udp_send(handle, host, prt, data)
+}
+
+// 接收数据报（最多 max 字节，阻塞），返回字符串。
+pub func udp_recv(handle: i64, max: i64) -> string {
+    return net.udp_recv(handle, max)
+}
+
+// ---------- 通用 ----------
+// 关闭句柄（释放底层套接字），成功返回 true。
+pub func close(handle: i64) -> bool {
+    return net.close(handle)
+}
+}

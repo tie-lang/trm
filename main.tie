@@ -7,6 +7,9 @@ import "./lib/process.tie"
 import "./lib/env.tie"
 import "./lib/clock.tie"
 import "./lib/terminal.tie"
+import "./lib/session.tie"
+import "./lib/data.tie"
+import "./lib/net.tie"
 
 // trm 整体发行版本号（主/次/补丁；各模块版本独立见各 lib/x.tie 的 module_version）。
 const TRM_VERSION: string = "0.1.0"
@@ -18,7 +21,10 @@ func main() {
         + "  process=" + trm_process.module_version()
         + "  env=" + trm_env.module_version()
         + "  clock=" + trm_clock.module_version()
-        + "  terminal=" + trm_terminal.module_version())
+        + "  terminal=" + trm_terminal.module_version()
+        + "  session=" + trm_session.module_version()
+        + "  data=" + trm_data.module_version()
+        + "  net=" + trm_net.module_version())
 
     // --- fs：写 → 读 → 删 ---
     var p = ".trm_demo.txt"
@@ -43,6 +49,27 @@ func main() {
     trm_clock.delay_ms(1)
     var dt = trm_clock.now_ms() - t0
     trm_terminal.info("clock.now=" + to_string(trm_clock.now()) + "  elapsed_ms=" + to_string(dt))
+
+    // --- session：config/profile/history 基础 ---
+    var sess_ok = trm_session.ensure_config()
+    trm_terminal.info("session.config_dir=" + trm_session.config_dir() + "  ensure=" + fmt_bool(sess_ok))
+    var set_ok = trm_session.profile_set("demo_key", "42")
+    var get_v = trm_session.profile_get("demo_key")
+    trm_terminal.info("session.profile_set=" + fmt_bool(set_ok) + "  get(demo_key)=" + get_v)
+    var hist_ok = trm_session.history_append("cmd-" + to_string(trm_clock.now()))
+    trm_terminal.info("session.history_append=" + fmt_bool(hist_ok) + "  history_len=" + to_string(len(trm_session.history_read())))
+
+    // --- data：写 → 读字节 → 读文本 → 删 ---
+    var fi = ".trm_data_demo.bin"
+    var dw = trm_data.write(fi, "trm-data")
+    var dbytes = trm_data.read_bytes(fi)
+    var dtxt = trm_data.read_text(fi)
+    trm_terminal.info("data.write=" + fmt_bool(dw) + "  bytes=" + to_string(len(dbytes)) + "  text=" + dtxt + "  size=" + to_string(trm_data.size(fi)))
+    trm_data.remove(fi)
+    trm_terminal.info("data.remove_exists=" + fmt_bool(trm_data.exists(fi)))
+
+    // --- net：模块可用性（版本+链接通过）；socket e2e 需并发，S3 M:N 再做 ---
+    trm_terminal.info("net.module_ok（编译+链接已通过；socket e2e 延后至 S3）")
 
     // --- terminal：日志辅助 ---
     trm_terminal.ok("库层基础功能回归通过")

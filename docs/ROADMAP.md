@@ -14,9 +14,9 @@
 
 | 步骤 | 内容 | 里程碑 |
 | --- | --- | --- |
-| **S1（当前）** | **库层核心系统域**：`fs / process / env / clock / terminal` | 5 模块编译零错误 + main 回归跑通 |
-| S2 | 库层补充域（session/data/net/ui 起步） | 各域可用 |
-| S3 | 引擎 frontend（interp + loader）：tieir 加载执行 | interp 跑通纯函数 |
+| **S1（完成）** | 库层核心系统域：`fs / process / env / clock / terminal` | 编译零错误 + 回归通过 |
+| **S2（完成）** | 库层补充域：`session / data / net`（ui 需平台桥，延后） | 三模块编译零错误 + 回归通过 |
+| S3 | 引擎 frontend（interp + loader）：tieir 加载执行；socket e2e 落测 | interp 跑通纯函数 |
 | S4 | 引擎 gc / mnn / objmodel | GC 探针 + 协程 |
 | S5 | backend：orcjit（LLVM）+ tiejit（简易执行器） | 统一契约矩阵 |
 
@@ -41,7 +41,8 @@
   `module_version() -> string` 查询。
 - **trm 整体发行版本号**：由 `main.tie` 持有 `const TRM_VERSION`（发行版主/次/补丁）。
 - 模块名与常量：fs→TRM_FS_VERSION，process→TRM_PROCESS_VERSION，env→TRM_ENV_VERSION，
-  clock→TRM_CLOCK_VERSION，terminal→TRM_TERMINAL_VERSION（避免全局常量跨模块重名）。
+  clock→TRM_CLOCK_VERSION，terminal→TRM_TERMINAL_VERSION，session→TRM_SESSION_VERSION，
+  data→TRM_DATA_VERSION，net→TRM_NET_VERSION（避免全局常量跨模块重名）。
 
 ### 3.2 构建依赖
 

@@ -1,0 +1,55 @@
+type tie<class>
+// lib/data.tie：trm 库层⑦ 数据 IO 面（命名空间 trm_data）。
+// 统一的文件 IO 面：文本/字节读写、存在性、大小、删除。
+// 压缩编解码（zd 等）留 std（设计 §4.1：data 只做文件 IO 面，zd 编解码留 std）。
+// 包装 std/fs。
+// 调用：import 后 trm_data.read_text("...") / trm_data.write("...", "...")。
+import "../stdlib/fs.tie"
+
+// trm.data 模块版本号（各模块独立版本化）。
+const TRM_DATA_VERSION: string = "0.1.0"
+
+namespace trm_data {
+// ---------- 模块版本 ----------
+pub func module_version() -> string {
+    return TRM_DATA_VERSION
+}
+
+// ---------- 读取 ----------
+// 读取文本文件全部内容；空串可能是空文件或失败（先 exists 判断）。
+pub func read_text(path: string) -> string {
+    return fs.read_to_string(path)
+}
+
+// 读取原始字节（元素 i64，值域 0..255）；失败返回空表。
+pub func read_bytes(path: string) -> table<i64> {
+    return fs.read_bytes(path)
+}
+
+// ---------- 写入 ----------
+// 覆盖写入文本；成功返回 true。
+pub func write(path: string, content: string) -> bool {
+    return fs.write(path, content)
+}
+
+// 追加文本（不存在则创建）；成功返回 true。
+pub func append(path: string, content: string) -> bool {
+    return fs.append(path, content)
+}
+
+// ---------- 元数据 / 删除 ----------
+// 路径是否存在。
+pub func exists(path: string) -> bool {
+    return fs.exists(path)
+}
+
+// 文件字节大小；缺失/目录返回 -1。
+pub func size(path: string) -> i64 {
+    return fs.size(path)
+}
+
+// 删除文件；成功返回 true（不存在返回 false）。
+pub func remove(path: string) -> bool {
+    return fs.remove_file(path)
+}
+}
