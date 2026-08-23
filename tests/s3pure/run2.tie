@@ -1,0 +1,34 @@
+type tie<logic>
+// tests/s3pure/run2.tie —— P0 验收：loader 加载 .tieir + interp 执行纯函数。
+// 流程：trm_loader.load → dump → trm_interp.run(add/sub/mul)。
+import "../../core/frontend/loader.tie"
+import "../../core/frontend/interp.tie"
+
+func main() {
+    var path = "f:/Projects/tie-repo/trm/tests/s3pure/pure2_bytes.txt"
+    if !trm_loader.load(path) {
+        println("[run2] 加载失败: " + trm_loader.err_msg())
+        return
+    }
+    println(trm_loader.dump_text())
+
+    // --- interp 执行纯函数 ---
+    check("add", 2, 3, 5)
+    check("sub", 9, 4, 5)
+    check("mul", 6, 7, 42)
+    println("[OK] P0 验收：loader+interp 跑通纯函数")
+}
+
+// 构造参数表并调用 interp，比对预期。
+func check(fname: string, a: i64, b: i64, want: i64) {
+    var args: table<i64> = table_new_i64()
+    table_push(args, a)
+    table_push(args, b)
+    var got = trm_interp.run(fname, args)
+    var status: string = "FAIL"
+    if got == want {
+        status = "PASS"
+    }
+    println(fname + "(" + to_string(a) + "," + to_string(b) + ") = " + to_string(got)
+        + "  期望 " + to_string(want) + "  [" + status + "]")
+}

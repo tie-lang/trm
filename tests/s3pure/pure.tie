@@ -1,0 +1,13 @@
+type tie<class>
+// tests/s3pure/pure.tie —— S3 最小 interp 验收源（纯函数集）。
+// 编译为 .tieir，供 trm 引擎 frontend loader + interp 加载执行。
+namespace pure {
+// 纯函数：a + b
+pub func add(a: i64, b: i64) -> i64 {
+    return a + b
+}
+// 纯函数：n * 2
+pub func double(n: i64) -> i64 {
+    return n * 2
+}
+}

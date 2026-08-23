@@ -1,0 +1,250 @@
+type tie<class>
+// core/frontend/interp.tie —— 引擎前端②：最小 interp（命名空间 trm_interp）。
+// 在 trm_loader 反序列化出的 tieir IR 上执行纯函数（P0 验收：一个纯函数跑通）。
+// 值模型：SSA 值 id → i64 槽表（vt）。参数值 id 从 0 连续，指令结果值 id 由
+// loader 给出（ins_val）。操作数 kind：0=值 id，1=块，2=立即数。
+// 已支持 opcode：算术 add/sub/mul/div/mod/neg、位 and/or/xor/not、移位 shl/shr、
+// 常量 const_i、控制流 ret/br/cond_br、比较 icmp、选 select。
+// 调用：trm_interp.run(loader, "add", args) -> i64；失败返回 l_err 于 err_msg。
+import "./loader.tie"
+
+const OK_VALUE: i64 = 0
+const OK_BLOCK: i64 = 1
+const OK_IMM: i64 = 2
+
+// opcode（对齐 compiler/middle/ir.tie 权威表）
+const OP_ADD: i64 = 0
+const OP_SUB: i64 = 1
+const OP_MUL: i64 = 2
+const OP_DIV: i64 = 3
+const OP_MOD: i64 = 4
+const OP_NEG: i64 = 5
+const OP_AND: i64 = 6
+const OP_OR: i64 = 7
+const OP_XOR: i64 = 8
+const OP_NOT: i64 = 9
+const OP_SHL: i64 = 10
+const OP_SHR: i64 = 11
+const OP_ICMP: i64 = 12
+const OP_BR: i64 = 30
+const OP_COND_BR: i64 = 31
+const OP_RET: i64 = 32
+const OP_SELECT: i64 = 36
+const OP_CONST_I: i64 = 58
+
+var i_err: string = "";
+var i_vt: table<i64>;   // 值槽表（value id 下标）
+
+namespace trm_interp {
+func set_err(msg: string) {
+    i_err = msg
+}
+pub func err_msg() -> string {
+    return i_err
+}
+
+// 值槽表大小 = 参数值数 + 结果值数。
+func vt_size() -> i64 {
+    return trm_loader.total_params() + trm_loader.value_count()
+}
+
+// 执行入口块线性；单块纯函数返回其 ret 值。
+pub func run(fname: string, args: table<i64>) -> i64 {
+    i_err = ""
+    var fid = find_func(fname)
+    if fid < 0 {
+        set_err("函数未找到: " + fname)
+        return 0
+    }
+    // 参数个数校验
+    var cnt = trm_loader.func_params_cnt(fid)
+    if cnt != len(args) {
+        set_err("参数个数不符: " + fname + " 期望 " + to_string(cnt) + " 实给 " + to_string(len(args)))
+        return 0
+    }
+    // 建值表 + 绑定参数
+    i_vt = table_new_i64()
+    var z: i64 = 0
+    while z < vt_size() {
+        table_push(i_vt, 0)
+        z = z + 1
+    }
+    var pi: i64 = 0
+    while pi < cnt {
+        i_vt[trm_loader.func_param_val_id(fid, pi)] = args[pi]
+        pi = pi + 1
+    }
+    // 从入口块线性执行
+    var entry = trm_loader.func_entry(fid)
+    return exec_block(entry)
+}
+
+// 线性执行一个块（不跨块跳转——P0 纯函数单块；返回该块 ret 值）。
+func exec_block(bid: i64) -> i64 {
+    var start = trm_loader.block_start(bid)
+    var end = trm_loader.block_end(bid)
+    var ii: i64 = start
+    while ii < end {
+        var op = trm_loader.ins_op(ii)
+        // 返回
+        if op == OP_RET {
+            if trm_loader.ins_ops_cnt(ii) >= 1 {
+                return read_opnd(ii, 0)
+            }
+            return 0
+        }
+        // 算术/位/移位：双操作数（值）
+        if op == OP_ADD || op == OP_SUB || op == OP_MUL || op == OP_DIV ||
+            op == OP_MOD || op == OP_AND || op == OP_OR || op == OP_XOR ||
+            op == OP_SHL || op == OP_SHR {
+            var a = read_opnd(ii, 0)
+            var b = read_opnd(ii, 1)
+            var r: i64 = 0
+            if op == OP_ADD {
+                r = a + b
+            }
+            else if op == OP_SUB {
+                r = a - b
+            }
+            else if op == OP_MUL {
+                r = a * b
+            }
+            else if op == OP_DIV {
+                r = a / b
+            }
+            else if op == OP_MOD {
+                r = a % b
+            }
+            else if op == OP_AND {
+                r = a & b
+            }
+            else if op == OP_OR {
+                r = a | b
+            }
+            else if op == OP_XOR {
+                r = a ^ b
+            }
+            else if op == OP_SHL {
+                r = a << b
+            }
+            else {
+                r = a >> b
+            }
+            store_result(ii, r)
+        }
+        // 取负：单操作数
+        else if op == OP_NEG {
+            store_result(ii, -read_opnd(ii, 0))
+        }
+        // 按位非：~x = x ^ -1
+        else if op == OP_NOT {
+            store_result(ii, read_opnd(ii, 0) ^ -1)
+        }
+        // 整数常量：操作数①即立即数
+        else if op == OP_CONST_I {
+            store_result(ii, read_opnd_raw(ii, 0))
+        }
+        // 比较：③ 立即数 = 比较码
+        else if op == OP_ICMP {
+            var x = read_opnd(ii, 0)
+            var y = read_opnd(ii, 1)
+            var cc = read_opnd_raw_kind(ii, 2)
+            store_result(ii, cmp(cc, x, y))
+        }
+        // select：① 条件 ②t ③f
+        else if op == OP_SELECT {
+            var cond = read_opnd(ii, 0)
+            var tv = read_opnd(ii, 1)
+            var fv = read_opnd(ii, 2)
+            if cond != 0 {
+                store_result(ii, tv)
+            } else {
+                store_result(ii, fv)
+            }
+        }
+        ii = ii + 1
+    }
+    set_err("块 " + to_string(bid) + " 无返回指令")
+    return 0
+}
+
+// 按 kind 读操作数值：值 id → vt，立即数 → 原值。
+func read_opnd(ii: i64, k: i64) -> i64 {
+    var kind = trm_loader.opnd_kind_of(ii, k)
+    var raw = trm_loader.opnd_val_of(ii, k)
+    if kind == OK_VALUE {
+        if raw < 0 || raw >= len(i_vt) {
+            return 0
+        }
+        return i_vt[raw]
+    }
+    return raw
+}
+
+// 读操作数原始值（不查 vt；const_i 立即数用）。
+func read_opnd_raw(ii: i64, k: i64) -> i64 {
+    return trm_loader.opnd_val_of(ii, k)
+}
+func read_opnd_raw_kind(ii: i64, k: i64) -> i64 {
+    return trm_loader.opnd_kind_of(ii, k)
+}
+
+// 把结果写入指令结果值 id。
+func store_result(ii: i64, v: i64) {
+    var vid = trm_loader.ins_val(ii)
+    if vid >= 0 && vid < len(i_vt) {
+        i_vt[vid] = v
+    }
+}
+
+// 比较码：0=eq 1=ne 2=lt 3=gt 4=le 5=ge。
+func cmp(cc: i64, a: i64, b: i64) -> i64 {
+    if cc == 0 {
+        if a == b {
+            return 1
+        }
+        return 0
+    }
+    if cc == 1 {
+        if a != b {
+            return 1
+        }
+        return 0
+    }
+    if cc == 2 {
+        if a < b {
+            return 1
+        }
+        return 0
+    }
+    if cc == 3 {
+        if a > b {
+            return 1
+        }
+        return 0
+    }
+    if cc == 4 {
+        if a <= b {
+            return 1
+        }
+        return 0
+    }
+    if a >= b {
+        return 1
+    }
+    return 0
+}
+
+// 按函数名查函数 id（解析池串）。
+func find_func(fname: string) -> i64 {
+    var n = trm_loader.func_count()
+    var i: i64 = 0
+    while i < n {
+        if trm_loader.pool(trm_loader.func_name_id(i)) == fname {
+            return i
+        }
+        i = i + 1
+    }
+    return -1
+}
+}

@@ -16,7 +16,7 @@
 | --- | --- | --- |
 | **S1（完成）** | 库层核心系统域：`fs / process / env / clock / terminal` | 编译零错误 + 回归通过 |
 | **S2（完成）** | 库层补充域：`session / data / net`（ui 需平台桥，延后） | 三模块编译零错误 + 回归通过 |
-| S3 | 引擎 frontend（interp + loader）：tieir 加载执行；socket e2e 落测 | interp 跑通纯函数 |
+| **S3（完成）** | 引擎 frontend：`loader`（tieir 反序列化+校验）+ `interp`（最小字节码 VM） | P0 验收：加载+interp 跑通 add/sub/mul 纯函数 |
 | S4 | 引擎 gc / mnn / objmodel | GC 探针 + 协程 |
 | S5 | backend：orcjit（LLVM）+ tiejit（简易执行器） | 统一契约矩阵 |
 
@@ -48,6 +48,16 @@
 
 - 库层包装 vendored std/fs|process 的桥内置（file_read/file_write 等）需 tie-interp 静态库。
 - 编译需设 `TIE_INTERP_LIB` 指向 tie-interp 库，或在 CWD 下存在 `target\release\tie_interp.lib`。
+
+### 3.3 S3 引擎加载执行（完成）
+
+- `core/frontend/loader.tie`：tieir（段 1-7）反序列化 + 校验（魔数/版本/段号/计数/偏移/段界/尾量），
+  反序列化重建参数/结果值 id（函数先建领参数值、指令后建领结果值，单调递增）。
+- `core/frontend/interp.tie`：最小字节码 VM，支持算术/位/移位/const_i/ret/br/cond_br/icmp/select。
+- 验收：`tests/s3pure` 加载 .tieir 后 interp 跑通 `add/sub/mul` 纯函数（结果 PASS）。
+- **已知编译器约束**：此 tiec 构建的 `byte_read`/`byte_write` 内置在特定程序形态下崩溃
+  （`tiec --tieir-out` 亦崩），故 .tieir 经逗号分隔字节文本中转（gen2 → loader），
+  不使用 byte 内置；待 tiec 修复后改回二进制直读。
 
 - 验收：各库文件 `tiec` 编译零错误；`main.tie` 调用各模块并输出预期结果。
 

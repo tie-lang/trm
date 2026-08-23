@@ -1,0 +1,644 @@
+type tie<class>
+// core/frontend/loader.tie —— 引擎前端①：tieir 加载/反序列化 + 校验（命名空间 trm_loader）。
+// 对齐 tieir-format §2.1 + tieir_ser 序列化布局：
+//   段1 魔数"TIEIR"+版本[i64 BE]；段2-7 每段=段号[i64]+段体长[i64]+段体。
+//   字符串 = 长度[i64] + 逐码点[i64 BE]；各列 i64 定宽 8 字节大端。
+// 反序列化重建：函数先建(领参数值,单调增)、指令后建(领结果值)——值 id 按此顺序复现。
+// 校验：魔数/版本/段号/段序/计数非法/段界越界/尾部余量 → 失败（l_err 取原因）。
+// 调用：trm_loader.load(path) -> bool；然后各访问器取结构。
+import "../../stdlib/fs.tie"
+
+// i64 类型 id（types.named(TK_I64)）；结果类型 VOID_DISC=-1 表示无结果。
+const L_I64: i64 = 3
+
+// ---------- 全局解码状态 ----------
+var l_dpos: i64 = 0          // 解码游标
+var l_sec_end: i64 = 0       // 当前段体结束位置
+var l_err: string = ""       // 最近错误（空 = 成功）
+
+// ---------- 反序列化产物 ----------
+var l_pool: table<string>;    // 字符串池（id 即下标）
+var l_pkg_name: string = ""
+var l_pkg_version: string = ""
+var l_ir_version: i64 = 0
+var l_comp_version: string = ""
+// 函数表
+var l_fname: table<i64>;      // 函数名（池 id）
+var l_fret: table<i64>;       // 返回类型 id
+var l_fp_off: table<i64>;     // 参数段偏移（ir_ops 内，校验项）
+var l_fp_cnt: table<i64>;     // 参数个数
+var l_fentry: table<i64>;     // 入口块 id
+var l_finst: table<i64>;      // 函数指令总数
+var l_fexp: table<i64>;       // 导出标记
+var l_ftys: table<i64>;       // 参数类型（扁平，函数序）
+var l_fty_off: table<i64>;    // 各函数参数类型段偏移
+// 块表
+var l_bfunc: table<i64>;
+var l_bname: table<i64>;
+var l_bstart: table<i64>;
+var l_bend: table<i64>;
+// 指令表（操作数交织：v,k,v,k,...）
+var l_iop: table<i64>;
+var l_ity: table<i64>;
+var l_ival: table<i64>;
+var l_ioff: table<i64>;       // 操作数段偏移（文件值，校验/展示用）
+var l_opstart: table<i64>;    // 本地 l_ops 中该指令操作数起始下标
+var l_icnt: table<i64>;
+var l_ops: table<i64>;        // 扁平操作数段 [v,k,...]
+// 导出表
+var l_ename: table<i64>;
+var l_esig: table<i64>;
+var l_eline: table<i64>;
+var l_ecol: table<i64>;
+// 派生
+var l_value_count: i64 = 0;   // 总值数（参数 + 有结果指令）
+var l_total_params: i64 = 0;  // 全部函数参数值个数（参数值 id 从 0 连续）
+
+namespace trm_loader {
+// ---------- 错误 ----------
+func set_err(msg: string) {
+    l_err = msg
+}
+pub func err_msg() -> string {
+    return l_err
+}
+
+func reset_state() {
+    l_err = ""
+    l_dpos = 0
+    l_sec_end = 0
+    l_pkg_name = ""
+    l_pkg_version = ""
+    l_ir_version = 0
+    l_comp_version = ""
+    l_pool = table_new_string()
+    l_fname = table_new_i64(); l_fret = table_new_i64()
+    l_fp_off = table_new_i64(); l_fp_cnt = table_new_i64()
+    l_fentry = table_new_i64(); l_finst = table_new_i64()
+    l_fexp = table_new_i64(); l_ftys = table_new_i64(); l_fty_off = table_new_i64()
+    l_bfunc = table_new_i64(); l_bname = table_new_i64()
+    l_bstart = table_new_i64(); l_bend = table_new_i64()
+    l_iop = table_new_i64(); l_ity = table_new_i64(); l_ival = table_new_i64()
+    l_ioff = table_new_i64(); l_opstart = table_new_i64(); l_icnt = table_new_i64(); l_ops = table_new_i64()
+    l_ename = table_new_i64(); l_esig = table_new_i64(); l_eline = table_new_i64(); l_ecol = table_new_i64()
+    l_value_count = 0
+    l_total_params = 0
+}
+
+// ---------- 解码原语（l_dpos 推进，同 tieir_ser.rd_*） ----------
+func rd_i64(t: table<i64>) -> i64 {
+    var n = len(t)
+    if l_dpos + 8 > n {
+        set_err("tieir 数据截断（读取 i64 越界）")
+        return 0
+    }
+    var v: i64 = 0
+    var k: i64 = 0
+    while k < 8 {
+        var b = t[l_dpos + k]
+        if b < 0 || b > 255 {
+            set_err("tieir 字节越界(" + to_string(b) + ")")
+            return 0
+        }
+        v = (v << 8) | b
+        k = k + 1
+    }
+    l_dpos = l_dpos + 8
+    return v
+}
+
+func rd_str(t: table<i64>) -> string {
+    var n = rd_i64(t)
+    if l_err != "" {
+        return ""
+    }
+    if n < 0 || n > 1000000 {
+        set_err("tieir 字符串长度非法(" + to_string(n) + ")")
+        return ""
+    }
+    var out: string = ""
+    var i: i64 = 0
+    while i < n {
+        var cp = rd_i64(t)
+        if l_err != "" {
+            return ""
+        }
+        if cp < 0 || cp > 1114111 {
+            set_err("tieir 码点非法(" + to_string(cp) + ")")
+            return ""
+        }
+        out = out + str_from_code(cp)
+        i = i + 1
+    }
+    return out
+}
+
+func in_sec() -> bool {
+    return l_dpos <= l_sec_end
+}
+
+func rd_sec_head(t: table<i64>, expect: i64) -> bool {
+    var sec = rd_i64(t)
+    if l_err != "" {
+        return false
+    }
+    if sec != expect {
+        set_err("tieir 段号错误(期望 " + to_string(expect) + " 实际 " + to_string(sec) + ")")
+        return false
+    }
+    var body_len = rd_i64(t)
+    if l_err != "" {
+        return false
+    }
+    if body_len < 0 {
+        set_err("tieir 段体长度非法")
+        return false
+    }
+    l_sec_end = l_dpos + body_len
+    return true
+}
+
+func pool_str(id: i64) -> string {
+    if id < 0 {
+        return ""
+    }
+    return l_pool[id]
+}
+
+// ---------- 主入口：从字节表反序列化 ----------
+pub func load_bytes(t: table<i64>) -> bool {
+    reset_state()
+    var n = len(t)
+    if n < 5 + 8 {
+        set_err("tieir 文件过短")
+        return false
+    }
+    // 段1：魔数 + 版本
+    if t[0] != 84 || t[1] != 73 || t[2] != 69 || t[3] != 73 || t[4] != 82 {
+        set_err("tieir 魔数不匹配")
+        return false
+    }
+    l_dpos = 5
+    var ver = rd_i64(t)
+    if l_err != "" {
+        return false
+    }
+    if ver != 1 {
+        set_err("tieir 版本不兼容(" + to_string(ver) + ")")
+        return false
+    }
+    // 段2：模块头
+    if !rd_sec_head(t, 2) {
+        return false
+    }
+    var pkgn = rd_str(t)
+    var pkgv = rd_str(t)
+    l_ir_version = rd_i64(t)
+    var compv = rd_str(t)
+    var depn = rd_i64(t)
+    if l_err != "" || !in_sec() {
+        l_err = "tieir 模块头解析失败"
+        return false
+    }
+    if depn < 0 || depn > 100000 {
+        set_err("tieir 依赖数非法")
+        return false
+    }
+    l_pkg_name = pkgn
+    l_pkg_version = pkgv
+    l_comp_version = compv
+    var dk: i64 = 0
+    while dk < depn {
+        rd_str(t)  // 依赖名（本仓库 loader 不建依赖图，仅跳过）
+        rd_str(t)  // 依赖版本
+        if l_err != "" {
+            return false
+        }
+        dk = dk + 1
+    }
+    l_dpos = l_sec_end
+
+    // 段3：字符串池
+    if !rd_sec_head(t, 3) {
+        return false
+    }
+    var pooln = rd_i64(t)
+    if l_err != "" {
+        return false
+    }
+    if pooln < 0 || pooln > 1000000 {
+        set_err("tieir 字符串池大小非法")
+        return false
+    }
+    var pi: i64 = 0
+    while pi < pooln {
+        var s = rd_str(t)
+        if l_err != "" {
+            return false
+        }
+        table_push(l_pool, s)   // id 即下标
+        pi = pi + 1
+    }
+    l_dpos = l_sec_end
+
+    // 段4：符号表（本仓库 loader 暂不建设符号表，读取校验即可）
+    if !rd_sec_head(t, 4) {
+        return false
+    }
+    var symn = rd_i64(t)
+    if l_err != "" {
+        return false
+    }
+    if symn < 0 || symn > 1000000 {
+        set_err("tieir 符号表行数非法")
+        return false
+    }
+    var si: i64 = 0
+    while si < symn {
+        rd_i64(t); rd_i64(t); rd_i64(t); rd_i64(t); rd_i64(t); rd_i64(t)
+        if l_err != "" {
+            return false
+        }
+        si = si + 1
+    }
+    l_dpos = l_sec_end
+
+    // 段5：IR 主体
+    if !rd_sec_head(t, 5) {
+        return false
+    }
+    // 函数表
+    var fn_n = rd_i64(t)
+    if l_err != "" {
+        return false
+    }
+    if fn_n < 0 || fn_n > 1000000 {
+        set_err("tieir 函数数非法")
+        return false
+    }
+    var fi: i64 = 0
+    while fi < fn_n {
+        var fnm = rd_i64(t)
+        var frt = rd_i64(t)
+        var fpo = rd_i64(t)
+        var fpc = rd_i64(t)
+        var fen = rd_i64(t)
+        var fit = rd_i64(t)
+        var fex = rd_i64(t)
+        if l_err != "" {
+            return false
+        }
+        if fpc < 0 || fpc > 10000 {
+            set_err("tieir 函数参数数非法")
+            return false
+        }
+        if fpo != l_total_params {
+            set_err("tieir 函数参数段偏移不一致(函数" + to_string(fi) + ")")
+            return false
+        }
+        table_push(l_fname, fnm); table_push(l_fret, frt)
+        table_push(l_fp_off, fpo); table_push(l_fp_cnt, fpc)
+        table_push(l_fentry, fen); table_push(l_finst, fit)
+        table_push(l_fexp, fex)
+        table_push(l_fty_off, len(l_ftys))
+        var pk: i64 = 0
+        while pk < fpc {
+            var pt = rd_i64(t)
+            if l_err != "" {
+                return false
+            }
+            table_push(l_ftys, pt)
+            pk = pk + 1
+        }
+        l_total_params = l_total_params + fpc
+        fi = fi + 1
+    }
+    // 块表
+    var blk_n = rd_i64(t)
+    if l_err != "" {
+        return false
+    }
+    if blk_n < 0 || blk_n > 1000000 {
+        set_err("tieir 块数非法")
+        return false
+    }
+    var bstarts = table_new_i64()
+    var bends = table_new_i64()
+    var bi: i64 = 0
+    while bi < blk_n {
+        var bfn = rd_i64(t)
+        var bnm = rd_i64(t)
+        var bst = rd_i64(t)
+        var ben = rd_i64(t)
+        if l_err != "" {
+            return false
+        }
+        if bfn < 0 || bfn >= fn_n {
+            set_err("tieir 块所属函数越界")
+            return false
+        }
+        table_push(l_bfunc, bfn); table_push(l_bname, bnm)
+        table_push(l_bstart, bst); table_push(l_bend, ben)
+        table_push(bstarts, bst); table_push(bends, ben)
+        bi = bi + 1
+    }
+    // 指令表
+    var ins_n = rd_i64(t)
+    if l_err != "" {
+        return false
+    }
+    if ins_n < 0 || ins_n > 10000000 {
+        set_err("tieir 指令数非法")
+        return false
+    }
+    var prev_off: i64 = l_total_params  // 重建的自然操作数段偏移
+    var ii: i64 = 0
+    while ii < ins_n {
+        var owner = rd_i64(t)
+        var iop = rd_i64(t)
+        var ity = rd_i64(t)
+        var ivl = rd_i64(t)
+        var iof = rd_i64(t)
+        var icn = rd_i64(t)
+        if l_err != "" {
+            return false
+        }
+        if icn < 0 || icn > 100000 {
+            set_err("tieir 指令操作数个数非法")
+            return false
+        }
+        if owner < 0 || owner >= blk_n {
+            set_err("tieir 指令所属块越界")
+            return false
+        }
+        if iof != prev_off {
+            set_err("tieir 指令操作数段偏移不一致(指令" + to_string(ii) + ")")
+            return false
+        }
+        table_push(l_iop, iop); table_push(l_ity, ity)
+        table_push(l_ival, ivl); table_push(l_ioff, iof); table_push(l_icnt, icn)
+        // 本地 l_ops 起始下标（逐指令紧凑打包，与文件 ops_off 不同）
+        table_push(l_opstart, len(l_ops))
+        var ok: i64 = 0
+        while ok < icn {
+            var ov = rd_i64(t)
+            var okd = rd_i64(t)
+            if l_err != "" {
+                return false
+            }
+            table_push(l_ops, ov)
+            table_push(l_ops, okd)
+            ok = ok + 1
+        }
+        prev_off = prev_off + icn * 2
+        if ity >= 0 {
+            l_value_count = l_value_count + 1
+        }
+        ii = ii + 1
+    }
+    // 校验块区间合理（start<=end 且按块非负）
+    var bj: i64 = 0
+    while bj < blk_n {
+        if bstarts[bj] < 0 || bends[bj] < bstarts[bj] {
+            set_err("tieir 块指令段非法")
+            return false
+        }
+        bj = bj + 1
+    }
+    l_dpos = l_sec_end
+
+    // 段6：导出表
+    if !rd_sec_head(t, 6) {
+        return false
+    }
+    var exp_n = rd_i64(t)
+    if l_err != "" {
+        return false
+    }
+    if exp_n < 0 || exp_n > 1000000 {
+        set_err("tieir 导出表行数非法")
+        return false
+    }
+    var ei: i64 = 0
+    while ei < exp_n {
+        var enm = rd_i64(t)
+        var esg = rd_i64(t)
+        var eln = rd_i64(t)
+        var ecl = rd_i64(t)
+        if l_err != "" {
+            return false
+        }
+        table_push(l_ename, enm); table_push(l_esig, esg)
+        table_push(l_eline, eln); table_push(l_ecol, ecl)
+        ei = ei + 1
+    }
+    l_dpos = l_sec_end
+
+    // 段7：span 段
+    if !rd_sec_head(t, 7) {
+        return false
+    }
+    var span_n = rd_i64(t)
+    if l_err != "" {
+        return false
+    }
+    if span_n < 0 || span_n > 10000000 {
+        set_err("tieir span 行数非法")
+        return false
+    }
+    var spi: i64 = 0
+    while spi < span_n {
+        rd_i64(t); rd_i64(t); rd_i64(t)
+        if l_err != "" {
+            return false
+        }
+        spi = spi + 1
+    }
+    l_dpos = l_sec_end
+
+    // 收尾：游标必须恰好落在文件末尾
+    if l_dpos != n {
+        set_err("tieir 尾部多余数据(" + to_string(n - l_dpos) + " 字节)")
+        return false
+    }
+    return true
+}
+
+// 从文本字节文件加载（该 tiec 构建的 byte_read/byte_write 崩溃，故 tieir 以
+// 逗号分隔字节文本中转；此处用可靠的 fs 文本读 + 纯逻辑解析成字节表）。
+// path 指向逗号分隔字节数的文本文件。成功返回 true。
+pub func load(path: string) -> bool {
+    var content = fs.read_to_string(path)
+    if len(content) == 0 {
+        set_err("读取 tieir 字节文本失败或为空: " + path)
+        return false
+    }
+    var t = table_new_i64()
+    var n = str_len(content)
+    var i: i64 = 0
+    var cur: i64 = 0
+    var in_num: bool = false
+    while i < n {
+        var c = str_char(content, i)
+        if c == "," {
+            if in_num {
+                table_push(t, cur)
+                cur = 0
+                in_num = false
+            }
+        } else {
+            cur = cur * 10 + (char_code(c) - 48)
+            in_num = true
+        }
+        i = i + 1
+    }
+    if in_num {
+        table_push(t, cur)
+    }
+    if len(t) == 0 {
+        set_err("tieir 字节文本为空")
+        return false
+    }
+    return load_bytes(t)
+}
+
+// ---------- 访问器 ----------
+pub func pool(id: i64) -> string {
+    return pool_str(id)
+}
+pub func pkg_name() -> string {
+    return l_pkg_name
+}
+pub func pkg_version() -> string {
+    return l_pkg_version
+}
+pub func ir_version() -> i64 {
+    return l_ir_version
+}
+pub func comp_version() -> string {
+    return l_comp_version
+}
+pub func func_count() -> i64 {
+    return len(l_fname)
+}
+pub func block_count() -> i64 {
+    return len(l_bfunc)
+}
+pub func inst_count() -> i64 {
+    return len(l_iop)
+}
+pub func value_count() -> i64 {
+    return l_value_count
+}
+pub func total_params() -> i64 {
+    return l_total_params
+}
+// 函数访问器
+pub func func_name_id(fid: i64) -> i64 {
+    return l_fname[fid]
+}
+pub func func_ret(fid: i64) -> i64 {
+    return l_fret[fid]
+}
+pub func func_params_cnt(fid: i64) -> i64 {
+    return l_fp_cnt[fid]
+}
+pub func func_entry(fid: i64) -> i64 {
+    return l_fentry[fid]
+}
+pub func func_exported(fid: i64) -> i64 {
+    return l_fexp[fid]
+}
+// 参数值 id：所有函数参数值 id 从 0 连续（函数序 + 参数序）。
+pub func func_param_val_id(fid: i64, k: i64) -> i64 {
+    var acc: i64 = 0
+    var j: i64 = 0
+    while j < fid {
+        acc = acc + l_fp_cnt[j]
+        j = j + 1
+    }
+    return acc + k
+}
+// 块访问器
+pub func block_func(bid: i64) -> i64 {
+    return l_bfunc[bid]
+}
+pub func block_start(bid: i64) -> i64 {
+    return l_bstart[bid]
+}
+pub func block_end(bid: i64) -> i64 {
+    return l_bend[bid]
+}
+// 指令访问器
+pub func ins_op(iid: i64) -> i64 {
+    return l_iop[iid]
+}
+pub func ins_ty(iid: i64) -> i64 {
+    return l_ity[iid]
+}
+pub func ins_val(iid: i64) -> i64 {
+    return l_ival[iid]
+}
+pub func ins_ops_cnt(iid: i64) -> i64 {
+    return l_icnt[iid]
+}
+// 指令操作数：ops 段扁平 [v,k,...]；返回操作数原始值。
+func ins_opnd_val(iid: i64, k: i64) -> i64 {
+    var off = l_opstart[iid]
+    return l_ops[off + k * 2]
+}
+func ins_opnd_kind(iid: i64, k: i64) -> i64 {
+    var off = l_opstart[iid]
+    return l_ops[off + k * 2 + 1]
+}
+// 供 interp 使用：取指令第 k 个操作数的值 id / kind。
+pub func opnd_val_of(iid: i64, k: i64) -> i64 {
+    return ins_opnd_val(iid, k)
+}
+pub func opnd_kind_of(iid: i64, k: i64) -> i64 {
+    return ins_opnd_kind(iid, k)
+}
+// 导出表
+pub func export_count() -> i64 {
+    return len(l_ename)
+}
+pub func export_name(ei: i64) -> string {
+    return pool_str(l_ename[ei])
+}
+
+// ---------- dump：可读摘要 ----------
+pub func dump_text() -> string {
+    var s = "[tieir 摘要] 包=" + l_pkg_name + " 版本=" + l_pkg_version
+    s = s + " IR版本=" + to_string(l_ir_version) + " 编译器=" + l_comp_version
+    s = s + " | 函数=" + to_string(len(l_fname)) + " 块=" + to_string(len(l_bfunc))
+    s = s + " 指令=" + to_string(len(l_iop)) + " 值=" + to_string(l_value_count)
+    s = s + " 导出=" + to_string(len(l_ename)) + "\n"
+    var fi: i64 = 0
+    while fi < len(l_fname) {
+        s = s + "  [函数] " + pool_str(l_fname[fi]) + " 返回=" + to_string(l_fret[fi])
+        s = s + " 参数=" + to_string(l_fp_cnt[fi]) + " 入口块=" + to_string(l_fentry[fi])
+        s = s + " 导出=" + to_string(l_fexp[fi]) + "\n"
+        fi = fi + 1
+    }
+    var ii: i64 = 0
+    while ii < len(l_iop) {
+        s = s + "  [指令" + to_string(ii) + "] op=" + to_string(l_iop[ii])
+        s = s + " 属块=" + to_string(owner_of(ii)) + " ty=" + to_string(l_ity[ii])
+        s = s + " val=" + to_string(l_ival[ii]) + "\n"
+        ii = ii + 1
+    }
+    return s
+}
+
+// dump 辅助：指令所属块（用块区间反查）。
+func owner_of(iid: i64) -> i64 {
+    var bi: i64 = 0
+    while bi < len(l_bfunc) {
+        if iid >= l_bstart[bi] && iid < l_bend[bi] {
+            return bi
+        }
+        bi = bi + 1
+    }
+    return -1
+}
+}

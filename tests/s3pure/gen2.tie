@@ -1,0 +1,135 @@
+type tie<logic>
+// tests/s3pure/gen2.tie —— 自包含 tieir 编码器（逐字节转录 tieir_ser 布局），
+// 为 loader+interp P0 测试生成 pure2.tieir。内容：add/sub/mul 三个二元 i64 纯函数
+// （f(a,b)= a<op>b），导出 add。不依赖 tiec --tieir-out（其路径在此构建崩溃）。
+import "../../stdlib/bytes.tie"
+import "../../stdlib/fs.tie"
+
+var g_out: table<i64>;
+
+func main() {
+    g_out = table_new_i64()
+    // ---- 段 1：魔数 + 版本 ----
+    wr_byte(84); wr_byte(73); wr_byte(69); wr_byte(73); wr_byte(82)   // "TIEIR"
+    wr_i64(1)
+    // ---- 段 2：模块头 ----
+    var hp = wr_sec(2)
+    wr_str("pure"); wr_str("0.1.0"); wr_i64(1); wr_str("tiec"); wr_i64(0)  // 依赖 0
+    wr_end(hp)
+    // ---- 段 3：字符串池（id 0..6） ----
+    var sp = wr_sec(3)
+    wr_i64(7)
+    wr_str("pure"); wr_str("0.1.0"); wr_str("tiec"); wr_str("add")
+    wr_str("sub"); wr_str("mul"); wr_str("fn(i64,i64)->i64")
+    wr_end(sp)
+    // ---- 段 4：符号表（空） ----
+    var yp = wr_sec(4)
+    wr_i64(0)
+    wr_end(yp)
+    // ---- 段 5：IR 主体 ----
+    var ip = wr_sec(5)
+    wr_i64(3)  // 函数数
+    wr_func(3, 3, 0, 2, 0, 2)   // add: name=3 ret=3 p_off=0 p_cnt=2 entry=0 instTotal=2 exported=1
+    wr_func(4, 3, 2, 2, 1, 2)   // sub
+    wr_func(5, 3, 4, 2, 2, 2)   // mul
+    wr_i64(3)  // 块数：func,name,start,end
+    wr_i64(0); wr_i64(-1); wr_i64(0); wr_i64(2)
+    wr_i64(1); wr_i64(-1); wr_i64(2); wr_i64(4)
+    wr_i64(2); wr_i64(-1); wr_i64(4); wr_i64(6)
+    wr_i64(6)  // 指令数：owner,op,ty,val,off,cnt, ops
+    wr_inst(0, 0, 3, 6, 6, 2, 0, 1)      // add: block0 ty i64 val6 off6 cnt2 {:0 :1}
+    wr_inst(0, 32, -1, -1, 10, 1, 6, 0)  // ret val6
+    wr_inst(1, 1, 3, 7, 12, 2, 2, 3)     // sub val7
+    wr_inst(1, 32, -1, -1, 16, 1, 7, 0)
+    wr_inst(2, 2, 3, 8, 18, 2, 4, 5)     // mul val8
+    wr_inst(2, 32, -1, -1, 22, 1, 8, 0)
+    wr_end(ip)
+    // ---- 段 6：导出表（add） ----
+    var ep = wr_sec(6)
+    wr_i64(1)
+    wr_i64(3); wr_i64(6); wr_i64(1); wr_i64(1)  // name=add sig=fn(..) line col
+    wr_end(ep)
+    // ---- 段 7：span 段（空） ----
+    var pp = wr_sec(7)
+    wr_i64(0)
+    wr_end(pp)
+    // 写盘：byte_write 在此 tiec 下崩溃，改以文本导出字节序列（fs 文本写可靠），
+    // 再由 Python 脚本转成二进制 pure2.tieir。
+    var txt: string = ""
+    var n = len(g_out)
+    var bi: i64 = 0
+    while bi < n {
+        txt = txt + to_string(g_out[bi])
+        if bi + 1 < n {
+            txt = txt + ","
+        }
+        bi = bi + 1
+    }
+    var wrot = fs.write("f:/Projects/tie-repo/trm/tests/s3pure/pure2_bytes.txt", txt)
+    println("[gen2] 导出字节文本 ok=" + fmt_b(wrot) + " 字节=" + to_string(n))
+}
+
+func fmt_b(b: bool) -> string {
+    if b {
+        return "true"
+    }
+    return "false"
+}
+
+// 写一个函数行：name,ret,p_off,p_cnt,entry,instTotal,exported，其参数类型段（2 个 i64）。
+func wr_func(name: i64, ret: i64, poff: i64, pcnt: i64, entry: i64, itot: i64) {
+    wr_i64(name); wr_i64(ret); wr_i64(poff); wr_i64(pcnt); wr_i64(entry); wr_i64(itot); wr_i64(1)
+    wr_i64(3); wr_i64(3)  // 参数类型：i64, i64
+}
+
+// 写一条指令：owner,op,ty,val,off,cnt, 两个操作数（值 id 0 kind）。
+func wr_inst(owner: i64, op: i64, ty: i64, val: i64, off: i64, cnt: i64, o1: i64, o2: i64) {
+    wr_i64(owner); wr_i64(op); wr_i64(ty); wr_i64(val); wr_i64(off); wr_i64(cnt)
+    var k: i64 = 0
+    // 一次性写出两个操作数（cnt 由调用方保证=2 或 1）
+    if cnt >= 1 {
+        wr_i64(o1); wr_i64(0)
+    }
+    if cnt >= 2 {
+        wr_i64(o2); wr_i64(0)
+    }
+}
+
+// ---------- 字节编码原语（对齐 tieir_ser.wr_*） ----------
+func wr_byte(b: i64) {
+    table_push(g_out, b)
+}
+func wr_i64(v: i64) {
+    var k: i64 = 0
+    while k < 8 {
+        var shift: i64 = 56 - k * 8
+        wr_byte((v >> shift) & 255)
+        k = k + 1
+    }
+}
+func wr_str(s: string) {
+    var n = str_len(s)
+    wr_i64(n)
+    var i: i64 = 0
+    while i < n {
+        wr_i64(char_code(str_char(s, i)))
+        i = i + 1
+    }
+}
+// 段头；返回体起始下标（wr_end 回填长度）。
+func wr_sec(sec: i64) -> i64 {
+    wr_i64(sec)
+    var pos = len(g_out)
+    wr_i64(0)
+    return pos
+}
+// 回填段体长度到段头长度槽。
+func wr_end(len_pos: i64) {
+    var body_len = len(g_out) - (len_pos + 8)
+    var k: i64 = 0
+    while k < 8 {
+        var shift: i64 = 56 - k * 8
+        g_out[len_pos + k] = (body_len >> shift) & 255
+        k = k + 1
+    }
+}
