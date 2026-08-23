@@ -1,0 +1,16 @@
+type tie<port>
+
+// port/ 层 = 接口（trm 的对外端口面）。
+// 这里放 Backend 等"可替换实现"的契约声明；具体实现落到 core/backend/ 与 lib/。
+// 骨架阶段用占位标量签名，P0 起接入 tieir 模块 / Executable / Value 真实类型。
+
+// Backend 接口（设计 §3.1）：表示"执行 tieir 字节码"的一条可替换执行路径。
+// interp / orcjit / tiejit 实现同一接口 → 引擎调度透明、可热切换。
+port Backend {
+    // 字节码模块 → 可执行体句柄
+    pub func compile(self, ir: i64) -> i64
+    // 调用模块入口
+    pub func execute(self, exe: i64, entry: i64, args: i64) -> i64
+    // 动态调用（沙箱 / 热更 / 反射用）
+    pub func invoke(self, exe: i64, fn: i64, args: i64) -> i64
+}

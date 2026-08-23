@@ -28,9 +28,20 @@ tiec main.tie -o trm.exe
 
 ```
 trm/
-├── tie.pkg           # 包清单
-├── main.tie          # 入口（占位）
-├── docs/             # 设计文档索引
-├── src/              # 运行时源码（待建）
-└── impl-*/           # 平台实现层（win32 / posix / macos / android，待建）
+├── core/                # 引擎层（tieir 执行核心）
+│   ├── frontend/          #  前端（interp 解释，语义基准）
+│   │   └── loader/        #    tieir 类加载（并入前端）
+│   ├── backend/
+│   │   ├── orcjit/      #   LLVM ORC JIT（默认热点后端）
+│   │   └── tiejit/      #   简易执行器（orcjit 未覆盖的平台先用，后被取代）
+│   ├── gc/              # 引擎级统一 GC（独立子系统）
+│   ├── mnn/             # M:N 协程 / async 调度
+│   └── objmodel/        # 对象模型 / 反射
+├── lib/                 # 可共用代码（库层业务能力，全 tie 写）
+├── port/                # 接口（port 角色 / Backend trait / 平台端口）
+├── tool/                # 工具层（构建 / 分发 / 诊断）
+├── tie.pkg              # 包清单
+└── main.tie             # 入口（占位）
 ```
+
+依赖方向（硬约束）：`app → lib → core(interp/backend/gc) → port → 平台 → 系统 API`。
