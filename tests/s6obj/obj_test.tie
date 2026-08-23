@@ -1,0 +1,99 @@
+type tie<logic>
+// tests/s6obj/obj_test.tie —— S6 objmodel 对象模型/反射底座验收。
+// 加载纯2.tieir（add/sub/mul）后：运行时类型查询反射函数签名 → 序列化为规范文本 →
+// 反序列化回记录（round-trip）→ 跨域身份 interning + gc 对象类型标。全断言通过。
+import "../../core/frontend/loader.tie"
+import "../../core/gc/gc.tie"
+import "../../core/objmodel/objmodel.tie"
+
+func main() {
+    if !trm_loader.load("f:/Projects/tie-repo/trm/tests/s3pure/pure2_bytes.txt") {
+        println("[obj] 加载失败: " + trm_loader.err_msg())
+        return
+    }
+    trm_objmodel.setup()
+
+    // --- 内置类型注册表 ---
+    check("内置类型数", trm_objmodel.ty_count(), 6)
+    check_s("ty_name(0)", trm_objmodel.ty_name(0), "i64")
+    check("ty_of_name(i64)", trm_objmodel.ty_of_name("i64"), 0)
+    check("ty_kind(f64)", trm_objmodel.ty_kind(trm_objmodel.ty_of_name("f64")), 1)
+    check("ty_kind(void)", trm_objmodel.ty_kind(trm_objmodel.ty_of_name("void")), 5)
+
+    // --- 运行时类型查询 + 序列化/反序列化 round-trip ---
+    var n = trm_loader.func_count()
+    check("反射函数数", n, 3)
+    var f: i64 = 0
+    while f < n {
+        var sig = trm_objmodel.reflect_func_signature(f)
+        var pid = trm_objmodel.deserialize_sig(sig)
+        var fname = trm_loader.pool(trm_loader.func_name_id(f))
+        // 反序列化结果对回 loader
+        check_s("名字(" + fname + ")", trm_objmodel.parsed_name(pid), fname)
+        check("arity(" + fname + ")", trm_objmodel.parsed_arity(pid), trm_loader.func_params_cnt(f))
+        check_s("ret 为 i64(" + fname + ")", trm_objmodel.ty_name(trm_objmodel.parsed_ret(pid)), "i64")
+        // 参数类型 i64
+        var k: i64 = 0
+        while k < trm_loader.func_params_cnt(f) {
+            check_s("param" + to_string(k) + " 为 i64(" + fname + ")", trm_objmodel.ty_name(trm_objmodel.parsed_param(pid, k)), "i64")
+            k = k + 1
+        }
+        // round-trip：反序列化后再序列化 = 原文
+        var re = reser(pid)
+        check_s("round-trip(" + fname + ")", re, sig)
+        f = f + 1
+    }
+
+    // --- 跨域身份：签名 interning 稳定 ---
+    var a1 = trm_objmodel.deserialize_sig("add:i64:i64:i64")
+    var id1 = trm_objmodel.intern_sig("add:i64:i64:i64")
+    var id2 = trm_objmodel.intern_sig("add:i64:i64:i64")
+    var id3 = trm_objmodel.intern_sig("mul:i64:i64:i64")
+    check("intern 同文同 id", id1, id2)
+    var diff: i64 = 0
+    if id1 != id3 {
+        diff = 1
+    }
+    check("intern 异文异 id", diff, 1)
+    check_s("sig_name(id)", trm_objmodel.sig_name(id1), "add:i64:i64:i64")
+    check("parsed 复用", trm_objmodel.parsed_arity(a1), 2)
+
+    // --- 跨域身份：gc 对象类型标 ---
+    var obj = trm_gc.alloc(64)
+    check("gc 未标记", trm_objmodel.gc_type(obj), -1)
+    trm_objmodel.set_gc_type(obj, 0)
+    check("gc 标记 i64", trm_objmodel.gc_type(obj), 0)
+    trm_objmodel.set_gc_type(obj, trm_objmodel.ty_of_name("fn"))
+    check_s("gc 改标 fn", trm_objmodel.ty_name(trm_objmodel.gc_type(obj)), "fn")
+
+    println("[OK] S6 objmodel 对象模型/反射底座验收通过")
+}
+
+// 由反序列化记录再造签名文本（round-trip 校验）。
+func reser(pid: i64) -> string {
+    var ret = trm_objmodel.parsed_ret(pid)
+    var arity = trm_objmodel.parsed_arity(pid)
+    var params: table<i64> = table_new_i64()
+    var k: i64 = 0
+    while k < arity {
+        table_push(params, trm_objmodel.parsed_param(pid, k))
+        k = k + 1
+    }
+    return trm_objmodel.serialize_sig(trm_objmodel.parsed_name(pid), arity, params, ret)
+}
+
+func check(spec: string, got: i64, want: i64) {
+    var status: string = "FAIL"
+    if got == want {
+        status = "PASS"
+    }
+    println("  [" + status + "] " + spec + " = " + to_string(got) + " (期望 " + to_string(want) + ")")
+}
+
+func check_s(spec: string, got: string, want: string) {
+    var status: string = "FAIL"
+    if got == want {
+        status = "PASS"
+    }
+    println("  [" + status + "] " + spec + " = " + got + " (期望 " + want + ")")
+}

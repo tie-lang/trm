@@ -1,0 +1,234 @@
+type tie<class>
+// core/objmodel/objmodel.tie —— 对象模型 / 反射底座（探针，命名空间 trm_objmodel）。
+// 对应设计 §3.4：运行期类型查询、自动序列化、跨域身份是 GC + 序列化 + 调试器 +
+// 动态加载的公共底座，依赖 GC 的统一对象身份。
+// 本文件为该底座的“探针”实现（纯 tie 逻辑，可单文件编译回归）：
+//   1) 类型注册表：name→omTyId（内置 i64/f64/bool/string/fn/void）与 ir→om 桥接；
+//   2) 运行时类型查询：对已加载 tieir（trm_loader）枚举函数签名/参数/返回类型；
+//   3) 自动序列化：签名 ↔ 规范文本（"name:<t0>:<t1>:<ret>"）的可逆序列化/反序列化；
+//   4) 跨域身份：签名 interning（同文↔同 id）稳定身份 + 给 gc 对象打类型标（统一对象身份）。
+// 调用：setup() 建内置类型 → intern/deserialize/reflect …；验收 tests/s6obj。
+import "../frontend/loader.tie"
+
+// 类型 kind
+const KT_I64: i64 = 0
+const KT_F64: i64 = 1
+const KT_BOOL: i64 = 2
+const KT_STR: i64 = 3
+const KT_FN: i64 = 4
+const KT_VOID: i64 = 5
+
+// ---------- 类型注册表（omTyId 即下标） ----------
+var g_tyname: table<string>;
+var g_tykind: table<i64>;
+
+// ---------- 签名记录（pid 即下标） ----------
+var p_name: table<string>;
+var p_arity: table<i64>;
+var p_ret: table<i64>;
+var p_poff: table<i64>;    // p_params 内该记录的起始下标
+var p_params: table<i64>;   // 扁平参数类型 omTyId
+
+// ---------- 签名 interning（跨域身份：同文↔同 id） ----------
+var g_signame: table<string>;
+
+// ---------- gc 对象类型标（objId↔omTyId 对） ----------
+var g_ot_obj: table<i64>;
+var g_ot_ty: table<i64>;
+
+namespace trm_objmodel {
+// ---------- 类型注册表 ----------
+pub func setup() {
+    if len(g_tyname) > 0 {
+        return
+    }
+    g_tyname = table_new_string(); g_tykind = table_new_i64()
+    table_push(g_tyname, "i64"); table_push(g_tykind, KT_I64)
+    table_push(g_tyname, "f64"); table_push(g_tykind, KT_F64)
+    table_push(g_tyname, "bool"); table_push(g_tykind, KT_BOOL)
+    table_push(g_tyname, "string"); table_push(g_tykind, KT_STR)
+    table_push(g_tyname, "fn"); table_push(g_tykind, KT_FN)
+    table_push(g_tyname, "void"); table_push(g_tykind, KT_VOID)
+    p_name = table_new_string(); p_arity = table_new_i64(); p_ret = table_new_i64()
+    p_poff = table_new_i64(); p_params = table_new_i64()
+    g_signame = table_new_string()
+    g_ot_obj = table_new_i64(); g_ot_ty = table_new_i64()
+}
+
+pub func ty_count() -> i64 {
+    return len(g_tyname)
+}
+pub func ty_name(id: i64) -> string {
+    if id < 0 || id >= len(g_tyname) {
+        return "void"
+    }
+    return g_tyname[id]
+}
+pub func ty_kind(id: i64) -> i64 {
+    if id < 0 || id >= len(g_tykind) {
+        return KT_VOID
+    }
+    return g_tykind[id]
+}
+
+// 按名查类型 id（未注册则加入）。
+pub func ty_of_name(name: string) -> i64 {
+    var i: i64 = 0
+    while i < len(g_tyname) {
+        if g_tyname[i] == name {
+            return i
+        }
+        i = i + 1
+    }
+    table_push(g_tyname, name)
+    table_push(g_tykind, KT_VOID)
+    return len(g_tyname) - 1
+}
+
+// 按 kind 注册新类型名。
+pub func register(name: string, kind: i64) -> i64 {
+    var i: i64 = 0
+    while i < len(g_tyname) {
+        if g_tyname[i] == name {
+            g_tykind[i] = kind
+            return i
+        }
+        i = i + 1
+    }
+    table_push(g_tyname, name)
+    table_push(g_tykind, kind)
+    return len(g_tyname) - 1
+}
+
+// 把 tieir 的类型 id 桥接为 omId（loader 用 i64 类型 id = 3）。
+pub func map_ir_type(irt: i64) -> i64 {
+    if irt == 3 {
+        return 0   // i64
+    }
+    return ty_of_name("t" + to_string(irt))
+}
+
+// ---------- 序列化 ----------
+// 由签名要素构造规范文本：name:<t0>:<t1>:...:<ret>（类型取 omId 名）。
+pub func serialize_sig(name: string, arity: i64, params: table<i64>, ret: i64) -> string {
+    var s = name
+    var k: i64 = 0
+    while k < arity {
+        s = s + ":" + ty_name(params[k])
+        k = k + 1
+    }
+    s = s + ":" + ty_name(ret)
+    return s
+}
+
+// 从文本解析回签名记录，返回 pid。
+pub func deserialize_sig(sig: string) -> i64 {
+    var toks: table<string> = table_new_string()
+    var tok: string = ""
+    var i: i64 = 0
+    var n = str_len(sig)
+    while i <= n {
+        if i == n {
+            table_push(toks, tok)
+            tok = ""
+        } else {
+            var c = str_char(sig, i)
+            if c == ":" {
+                table_push(toks, tok)
+                tok = ""
+            } else {
+                tok = tok + c
+            }
+        }
+        i = i + 1
+    }
+    var arity = len(toks) - 2
+    var pid: i64 = len(p_name)
+    table_push(p_name, toks[0])
+    table_push(p_arity, arity)
+    table_push(p_poff, len(p_params))
+    var m: i64 = 0
+    while m < arity {
+        table_push(p_params, ty_of_name(toks[1 + m]))
+        m = m + 1
+    }
+    table_push(p_ret, ty_of_name(toks[1 + arity]))
+    return pid
+}
+
+// 反序列化访问器。
+pub func parsed_count() -> i64 {
+    return len(p_name)
+}
+pub func parsed_name(pid: i64) -> string {
+    return p_name[pid]
+}
+pub func parsed_arity(pid: i64) -> i64 {
+    return p_arity[pid]
+}
+pub func parsed_ret(pid: i64) -> i64 {
+    return p_ret[pid]
+}
+pub func parsed_param(pid: i64, k: i64) -> i64 {
+    return p_params[p_poff[pid] + k]
+}
+
+// ---------- 运行时类型查询（反射已加载 tieir） ----------
+// 由已加载模块 fid 生成签名文本（params/ret 经 ir→om 桥接）。
+pub func reflect_func_signature(fid: i64) -> string {
+    var name = trm_loader.pool(trm_loader.func_name_id(fid))
+    var arity = trm_loader.func_params_cnt(fid)
+    var params: table<i64> = table_new_i64()
+    var k: i64 = 0
+    while k < arity {
+        table_push(params, map_ir_type(trm_loader.func_param_type(fid, k)))
+        k = k + 1
+    }
+    var ret = map_ir_type(trm_loader.func_ret(fid))
+    return serialize_sig(name, arity, params, ret)
+}
+
+// ---------- 跨域身份 ----------
+// 签名 interning：同一文本 ↔ 同一稳定 id（跨域身份）。
+pub func intern_sig(sig: string) -> i64 {
+    var i: i64 = 0
+    while i < len(g_signame) {
+        if g_signame[i] == sig {
+            return i
+        }
+        i = i + 1
+    }
+    table_push(g_signame, sig)
+    return len(g_signame) - 1
+}
+pub func sig_name(id: i64) -> string {
+    return g_signame[id]
+}
+pub func sig_count() -> i64 {
+    return len(g_signame)
+}
+
+// gc 对象 ↔ 类型标记（统一对象身份：objId 由 trm_gc 给定）。
+pub func set_gc_type(obj: i64, ty: i64) {
+    var i: i64 = 0
+    while i < len(g_ot_obj) {
+        if g_ot_obj[i] == obj {
+            g_ot_ty[i] = ty
+            return
+        }
+        i = i + 1
+    }
+    table_push(g_ot_obj, obj)
+    table_push(g_ot_ty, ty)
+}
+pub func gc_type(obj: i64) -> i64 {
+    var i: i64 = 0
+    while i < len(g_ot_obj) {
+        if g_ot_obj[i] == obj {
+            return g_ot_ty[i]
+        }
+        i = i + 1
+    }
+    return -1
+}
+}

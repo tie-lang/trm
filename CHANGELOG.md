@@ -15,4 +15,6 @@
   （interp/tiejit 同契一致；orcjit 占位待实现）。
 - 引擎 orcjit（S5b）：独立 LLVM-MCJIT 驱动进程接入 `trm_orcjit`，契约矩阵**三后端
   （interp/tiejit/orcjit）同契全 PASS、无 SKIP**。
+- 引擎 objmodel（S6）：`trm_objmodel` 对象模型/反射底座（类型注册表 + 运行时类型查询 +
+  签名序列化/反序列化 + 跨域身份 interning + gc 对象类型标）；loader 增参数类型访问器。
 - 记录 tiec 后端坑：链式/嵌套表元素复绑定易崩溃或挂起，S4 起统一用扁平 `table<i64>` 规避；S5b 又见库 TU 内 `break` 解析怪癖，改无换行输出 + 免 break 解析规避。

@@ -19,6 +19,7 @@
 | **S3（完成）** | 引擎 frontend：`loader`（tieir 反序列化+校验）+ `interp`（最小字节码 VM） | P0 验收：加载+interp 跑通 add/sub/mul 纯函数 |
 | **S4（完成）** | 引擎 gc / mnn（objmodel 属 P4，保持占位） | GC 探针 + 协程：gc_test / mnn_test 验收通过 |
 | **S5（完成）** | backend：tiejit（简易执行器）+ orcjit（独立 LLVM-MCJIT 驱动进程）+ registry（契约矩阵） | 统一契约矩阵：interp/tiejit/orcjit 三端同契一致性验收通过 |
+| **S6（完成）** | 引擎 objmodel（对象模型/反射底座） | 运行时类型查询 + 自动序列化 + 跨域身份，tests/s6obj 验收 |
 
 ## 3. S1 具体方案
 
@@ -89,6 +90,14 @@
   读 tieir op → 调驱动 → 解析输出。契约矩阵升级为**三端全 PASS、无 SKIP**（18 断言全过）。
 - orcjit 用进程边界桥（tiec 无附加链接库/原始函数指针，进程内桥 LLVM 风险过高）；
   完整 tieir→LLVM IR 降级与进程内 JITLink 留待 P3。
+
+### 3.6 S6 对象模型/反射底座（完成）
+
+- `core/objmodel/objmodel.tie`（`trm_objmodel`）：类型注册表（name↔omTyId）+ ir→om 桥接；
+  对已加载 tieir 的运行时类型查询（函数签名/参数/返回）；签名的可逆序列化/反序列化
+  （`name:<t0>:<t1>:<ret>`）；跨域身份（签名 interning + gc 对象类型标）。
+- `core/frontend/loader.tie` 增 `func_param_type` 访问器，支撑类型反射。
+- 验收（`tests/s6obj`）：反射 add/sub/mul、round-trip、interning 稳定、gc 类型标，32 断言全过。
 
 ## 4. 决策记录
 

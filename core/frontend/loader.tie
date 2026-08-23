@@ -559,6 +559,13 @@ pub func func_param_val_id(fid: i64, k: i64) -> i64 {
     }
     return acc + k
 }
+// 参数类型 id（objmodel 反射用）：函数参数类型段内第 k 个类型。
+pub func func_param_type(fid: i64, k: i64) -> i64 {
+    if k < 0 || k >= l_fp_cnt[fid] {
+        return -1
+    }
+    return l_ftys[l_fty_off[fid] + k]
+}
 // 块访问器
 pub func block_func(bid: i64) -> i64 {
     return l_bfunc[bid]
