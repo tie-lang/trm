@@ -21,6 +21,7 @@
 | **S5（完成）** | backend：tiejit（简易执行器）+ orcjit（独立 LLVM-MCJIT 驱动进程）+ registry（契约矩阵） | 统一契约矩阵：interp/tiejit/orcjit 三端同契一致性验收通过 |
 | **S6（完成）** | 引擎 objmodel（对象模型/反射底座） | 运行时类型查询 + 自动序列化 + 跨域身份，tests/s6obj 验收 |
 | **S7（完成）** | 运行时内省诊断（diag） | 统一诊断快照 + 内省自检，tests/s7diag 验收 |
+| **S8（完成）** | 动态加载 + 模块生命周期（module 注册表） | load/内省/invoke/unload 生命周期，tests/s8mod 验收 |
 
 ## 3. S1 具体方案
 
@@ -108,6 +109,15 @@
 - `core/objmodel/objmodel.tie` 增 `module_version`（版本约定一致）。
 - 验收（`tests/s7diag`）：诊断项 + gc 对象 + 版本 + selfcheck=0，15 断言全过。
   P4「诊断 + 类型内省」落地。
+
+### 3.8 S8 动态加载 + 模块生命周期（完成）
+
+- `core/objmodel/module.tie`（`trm_module`）：模块注册表 + 生命周期。`load(path,alias)`
+  动态加载 .tieir 并登记（内省签名）；`module_func_*` 多模块内省；`activate`/`invoke`
+  按名动态调用（interp）；`unload` 卸载禁用、`activate` 复活。
+- `tests/s8mod/gen3.tie` 生成新资产 `calc2.tieir`（`double(n)=n*2`，const_i+mul）。
+- 验收（`tests/s8mod`）：加载两模块、内省、动态调用、卸载/复活，19 断言全过。
+  P4「动态加载 tieir」落地。
 
 ## 4. 决策记录
 

@@ -1,0 +1,113 @@
+type tie<class>
+// core/objmodel/module.tie —— 模块注册表 + 动态加载/生命周期（命名空间 trm_module）。
+// 对应设计 §3.4 / P4「动态加载 tieir + 类型内省 + 诊断」。
+// 在 trm_loader 的单模块加载之上提供**模块注册表与生命周期**：
+//   load(path, alias) → modId：加载 .tieir 并登记模块描述符（内省其函数签名）
+//   module_func_* / module_func_sig：内省已加载模块
+//   activate(id)：命中该模块（重新载入字节），供调起
+//   invoke(id, fname, args)：动态加载 + 按名调用（走 interp）
+//   unload(id)：标记卸载（不再可调用）；activate 可复活
+// 纯 tie 逻辑，可单文件编译回归。验收 tests/s8mod。
+import "../frontend/loader.tie"
+import "../frontend/interp.tie"
+import "./objmodel.tie"
+
+// 模块描述符（modId 即下标）
+var m_name: table<string>;   // 别名/标签
+var m_path: table<string>;   // .tieir 字节文本路径（activate/invoke 用）
+var m_load: table<i64>;      // 0=卸载，1=已装载
+var m_fn_off: table<i64>;    // m_fn_name/m_fn_sig 内该模块起始下标
+var m_fn_n: table<i64>;      // 该模块函数数
+var m_fn_name: table<string>; // 扁平函数名
+var m_fn_sig: table<string>;  // 扁平签名文本
+
+var m_err: string = ""
+
+namespace trm_module {
+pub func err_msg() -> string {
+    return m_err
+}
+
+// 加载一个 .tieir 模块并登记；返回 modId（失败返回 -1）。
+pub func load(path: string, alias: string) -> i64 {
+    trm_objmodel.setup()   // 确保类型注册表就绪（内省签名用）
+    if !trm_loader.load(path) {
+        m_err = "加载失败: " + trm_loader.err_msg()
+        return -1
+    }
+    var id: i64 = len(m_name)
+    table_push(m_name, alias)
+    table_push(m_path, path)
+    table_push(m_load, 1)
+    table_push(m_fn_off, len(m_fn_name))
+    var n = trm_loader.func_count()
+    table_push(m_fn_n, n)
+    var f: i64 = 0
+    while f < n {
+        table_push(m_fn_name, trm_loader.pool(trm_loader.func_name_id(f)))
+        table_push(m_fn_sig, trm_objmodel.reflect_func_signature(f))
+        f = f + 1
+    }
+    return id
+}
+
+pub func module_count() -> i64 {
+    return len(m_name)
+}
+pub func module_name(id: i64) -> string {
+    return m_name[id]
+}
+pub func module_path(id: i64) -> string {
+    return m_path[id]
+}
+pub func is_loaded(id: i64) -> i64 {
+    return m_load[id]
+}
+pub func module_func_count(id: i64) -> i64 {
+    return m_fn_n[id]
+}
+// 内省：模块 id 第 k 个函数名/签名。
+pub func module_func_name(id: i64, k: i64) -> string {
+    return m_fn_name[m_fn_off[id] + k]
+}
+pub func module_func_sig(id: i64, k: i64) -> string {
+    return m_fn_sig[m_fn_off[id] + k]
+}
+
+// 命中模块（重新载入字节），供调起；返回是否成功。
+pub func activate(id: i64) -> bool {
+    if id < 0 || id >= len(m_name) {
+        return false
+    }
+    if !trm_loader.load(m_path[id]) {
+        m_err = "重新加载失败: " + m_path[id]
+        return false
+    }
+    m_load[id] = 1
+    return true
+}
+
+// 卸载：标记不可调用（内省描述仍可读）。
+pub func unload(id: i64) {
+    if id >= 0 && id < len(m_load) {
+        m_load[id] = 0
+    }
+}
+
+// 动态加载 + 按名调用：命中模块后走 interp。
+pub func invoke(id: i64, fname: string, args: table<i64>) -> i64 {
+    if id < 0 || id >= len(m_name) {
+        m_err = "模块序号越界"
+        return 0
+    }
+    if m_load[id] != 1 {
+        m_err = "模块未装载: " + m_name[id]
+        return 0
+    }
+    if !trm_loader.load(m_path[id]) {
+        m_err = "重新加载失败: " + m_path[id]
+        return 0
+    }
+    return trm_interp.run(fname, args)
+}
+}

@@ -1,0 +1,106 @@
+type tie<logic>
+// tests/s8mod/module_test.tie —— S8 动态加载 + 模块生命周期验收。
+// 加载两个模块（pure.pure2 与 calc2.calc2）进注册表 → 内省两者签名 → 动态调用 →
+// 卸载禁用 → activate 复活。全断言通过。
+import "../../core/objmodel/module.tie"
+
+func main() {
+    var p = "f:/Projects/tie-repo/trm/tests/s3pure/pure2_bytes.txt"
+    var c = "f:/Projects/tie-repo/trm/tests/s8mod/calc2_bytes.txt"
+
+    // ---- 动态加载两模块 ----
+    var mp = trm_module.load(p, "pure")
+    var mc = trm_module.load(c, "calc2")
+    check("load pure", mp, 0)
+    check("load calc2", mc, 1)
+    check("module_count", trm_module.module_count(), 2)
+    check_s("module_name(0)", trm_module.module_name(0), "pure")
+    check_s("module_name(1)", trm_module.module_name(1), "calc2")
+
+    // ---- 内省 ----
+    check("funcs(pure)", trm_module.module_func_count(0), 3)
+    check("funcs(calc2)", trm_module.module_func_count(1), 1)
+    check_s("fn0(pure)", trm_module.module_func_name(0, 0), "add")
+    check_s("sig0(pure)", trm_module.module_func_sig(0, 0), "add:i64:i64:i64")
+    check_s("fn0(calc2)", trm_module.module_func_name(1, 0), "double")
+    check_s("sig1(calc2)", trm_module.module_func_sig(1, 0), "double:i64:i64")
+
+    // ---- 动态调用（interp 按名执行） ----
+    check_call("add(2,3)", trm_module.invoke(0, "add", two(2, 3)), 5)
+    check_call("double(5)", trm_module.invoke(1, "double", one(5)), 10)
+
+    // ---- 生命周期：卸载禁用 / 复活 ----
+    trm_module.unload(0)
+    check("unloaded(0)", trm_module.is_loaded(0), 0)
+    check("calc2 仍可用", trm_module.is_loaded(1), 1)
+    // 卸载后调用被拒（返回 0，置 err）
+    var blocked = trm_module.invoke(0, "add", two(1, 1))
+    check("卸载后不可调(add)=0", blocked, 0)
+    check_len("err 非空", trm_module.err_msg())
+    // activate 复活后恢复调用
+    var act = trm_module.activate(0)
+    check_b("activate(0)", act, true)
+    check("复活后可调(add)", trm_module.invoke(0, "add", two(4, 5)), 9)
+
+    println("[OK] S8 动态加载 + 模块生命周期验收通过")
+}
+
+func check_call(spec: string, got: i64, want: i64) {
+    var status: string = "FAIL"
+    if got == want {
+        status = "PASS"
+    }
+    println("  [" + status + "] " + spec + " = " + to_string(got) + " (期望 " + to_string(want) + ")")
+}
+
+func two(a: i64, b: i64) -> table<i64> {
+    var t: table<i64> = table_new_i64()
+    table_push(t, a)
+    table_push(t, b)
+    return t
+}
+
+func one(a: i64) -> table<i64> {
+    var t: table<i64> = table_new_i64()
+    table_push(t, a)
+    return t
+}
+
+func check_len(spec: string, s: string) {
+    var status: string = "FAIL"
+    if len(s) > 0 {
+        status = "PASS"
+    }
+    println("  [" + status + "] " + spec + " = len" + to_string(len(s)) + " (>0)")
+}
+
+func check(spec: string, got: i64, want: i64) {
+    var status: string = "FAIL"
+    if got == want {
+        status = "PASS"
+    }
+    println("  [" + status + "] " + spec + " = " + to_string(got) + " (期望 " + to_string(want) + ")")
+}
+
+func check_s(spec: string, got: string, want: string) {
+    var status: string = "FAIL"
+    if got == want {
+        status = "PASS"
+    }
+    println("  [" + status + "] " + spec + " = " + got + " (期望 " + want + ")")
+}
+
+func check_b(spec: string, got: bool, want: bool) {
+    var status: string = "FAIL"
+    if got == want {
+        status = "PASS"
+    }
+    println("  [" + status + "] " + spec + " = " + fmtb(got) + " (期望 " + fmtb(want) + ")")
+}
+
+func fmtb(b: bool) -> string {
+    if b {
+        return "true"
+    }
+    return "false"
+}

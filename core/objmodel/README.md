@@ -20,3 +20,10 @@
 `diag.tie`（`trm_diag`）——**运行时内省诊断探针**：把 loader/interp、gc、mnn、objmodel、
 backend 契约矩阵汇总成统一诊断快照（模块头/计数/组件/版本/matrix_ok）+ 内省自检
 （反射 round-trip 逐条自洽）。验收 `tests/s7diag` 15 断言全过。P4「诊断 + 类型内省」落地。
+
+## 状态（S8）动态加载 / 生命周期
+
+`module.tie`（`trm_module`）——**模块注册表 + 动态加载生命周期**：`load` 动态加载 .tieir
+并登记模块描述符（内省函数签名），`module_func_*` 多模块内省，`activate` 命中/`invoke`
+按名动态调用（interp），`unload` 卸载禁用可复活。验收 `tests/s8mod`（含新资产 calc2
+`double` 模块）19 断言全过。P4「动态加载 tieir」落地。

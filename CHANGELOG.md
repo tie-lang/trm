@@ -18,4 +18,6 @@
 - 引擎 objmodel（S6）：`trm_objmodel` 对象模型/反射底座（类型注册表 + 运行时类型查询 +
   签名序列化/反序列化 + 跨域身份 interning + gc 对象类型标）；loader 增参数类型访问器。
 - 引擎 diag（S7）：`trm_diag` 运行时内省诊断探针（统一诊断快照 + 内省自检），P4 诊断/内省落地。
+- 引擎 module（S8）：`trm_module` 动态加载 + 模块生命周期（load/内省/invoke/unload），
+  P4 动态加载落地；新增 calc2 模块资产（`double`）。
 - 记录 tiec 后端坑：链式/嵌套表元素复绑定易崩溃或挂起，S4 起统一用扁平 `table<i64>` 规避；S5b 又见库 TU 内 `break` 解析怪癖，改无换行输出 + 免 break 解析规避。

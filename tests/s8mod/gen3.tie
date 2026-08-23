@@ -1,0 +1,118 @@
+type tie<logic>
+// tests/s8mod/gen3.tie —— 生成 calc2.tieir（double 函数），供 S8 动态加载生命周期探针使用。
+// 自包含 tieir 编码器（逐字节转录 tieir_ser 布局），内容：double(n)=n*2 单 k（1 参纯函数）。
+// 复用 gen2 已验证的字节编码原语；因 tiec 的 byte_write 崩溃，仍以逗号分隔字节文本中转。
+import "../../stdlib/bytes.tie"
+import "../../stdlib/fs.tie"
+
+var g_out: table<i64>;
+
+func main() {
+    g_out = table_new_i64()
+    // ---- 段 1：魔数 + 版本 ----
+    wr_byte(84); wr_byte(73); wr_byte(69); wr_byte(73); wr_byte(82)   // "TIEIR"
+    wr_i64(1)
+    // ---- 段 2：模块头 ----
+    var hp = wr_sec(2)
+    wr_str("calc2"); wr_str("0.1.0"); wr_i64(1); wr_str("tiec"); wr_i64(0)  // 依赖 0
+    wr_end(hp)
+    // ---- 段 3：字符串池（id 0..4） ----
+    var sp = wr_sec(3)
+    wr_i64(5)
+    wr_str("calc2"); wr_str("0.1.0"); wr_str("tiec"); wr_str("double")
+    wr_str("fn(i64)->i64")
+    wr_end(sp)
+    // ---- 段 4：符号表（空） ----
+    var yp = wr_sec(4)
+    wr_i64(0)
+    wr_end(yp)
+    // ---- 段 5：IR 主体 ----
+    var ip = wr_sec(5)
+    wr_i64(1)  // 函数数
+    wr_func1(3, 3, 0, 1, 0, 3)   // double: name=3 ret=3 p_off=0 p_cnt=1 entry=0 instTotal=3
+    wr_i64(1)  // 块数
+    wr_i64(0); wr_i64(-1); wr_i64(0); wr_i64(3)
+    wr_i64(3)  // 指令数
+    // const_i: val1 = 2（立即数 kind=2）
+    wr_i64(0); wr_i64(58); wr_i64(3); wr_i64(1); wr_i64(1); wr_i64(1)
+    wr_i64(2); wr_i64(2)
+    // mul: val2 = mul(val0=param0, val1)
+    wr_i64(0); wr_i64(2); wr_i64(3); wr_i64(2); wr_i64(3); wr_i64(2)
+    wr_i64(0); wr_i64(0)
+    wr_i64(1); wr_i64(0)
+    // ret: return val2
+    wr_i64(0); wr_i64(32); wr_i64(-1); wr_i64(-1); wr_i64(7); wr_i64(1)
+    wr_i64(2); wr_i64(0)
+    wr_end(ip)
+    // ---- 段 6：导出表（double） ----
+    var ep = wr_sec(6)
+    wr_i64(1)
+    wr_i64(3); wr_i64(4); wr_i64(1); wr_i64(1)  // name=double sig=fn(i64)->i64 line col
+    wr_end(ep)
+    // ---- 段 7：span 段（空） ----
+    var pp = wr_sec(7)
+    wr_i64(0)
+    wr_end(pp)
+    // 写盘：逗号分隔字节文本（fs 文本写可靠）
+    var txt: string = ""
+    var n = len(g_out)
+    var bi: i64 = 0
+    while bi < n {
+        txt = txt + to_string(g_out[bi])
+        if bi + 1 < n {
+            txt = txt + ","
+        }
+        bi = bi + 1
+    }
+    var wrot = fs.write("f:/Projects/tie-repo/trm/tests/s8mod/calc2_bytes.txt", txt)
+    println("[gen3] 导出字节文本 ok=" + fmt_b(wrot) + " 字节=" + to_string(n))
+}
+
+func fmt_b(b: bool) -> string {
+    if b {
+        return "true"
+    }
+    return "false"
+}
+
+// 写单参函数行：name,ret,p_off,p_cnt,entry,instTotal；参数类型 1 个 i64。
+func wr_func1(name: i64, ret: i64, poff: i64, pcnt: i64, entry: i64, itot: i64) {
+    wr_i64(name); wr_i64(ret); wr_i64(poff); wr_i64(pcnt); wr_i64(entry); wr_i64(itot); wr_i64(1)
+    wr_i64(3)  // 参数类型：i64
+}
+
+func wr_byte(b: i64) {
+    table_push(g_out, b)
+}
+func wr_i64(v: i64) {
+    var k: i64 = 0
+    while k < 8 {
+        var shift: i64 = 56 - k * 8
+        wr_byte((v >> shift) & 255)
+        k = k + 1
+    }
+}
+func wr_str(s: string) {
+    var n = str_len(s)
+    wr_i64(n)
+    var i: i64 = 0
+    while i < n {
+        wr_i64(char_code(str_char(s, i)))
+        i = i + 1
+    }
+}
+func wr_sec(sec: i64) -> i64 {
+    wr_i64(sec)
+    var pos = len(g_out)
+    wr_i64(0)
+    return pos
+}
+func wr_end(len_pos: i64) {
+    var body_len = len(g_out) - (len_pos + 8)
+    var k: i64 = 0
+    while k < 8 {
+        var shift: i64 = 56 - k * 8
+        g_out[len_pos + k] = (body_len >> shift) & 255
+        k = k + 1
+    }
+}
