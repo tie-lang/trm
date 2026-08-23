@@ -10,6 +10,8 @@ type tie<class>
 // 调用：setup() 建内置类型 → intern/deserialize/reflect …；验收 tests/s6obj。
 import "../frontend/loader.tie"
 
+const TRM_OBJMODEL_VERSION: string = "0.1.0"
+
 // 类型 kind
 const KT_I64: i64 = 0
 const KT_F64: i64 = 1
@@ -230,5 +232,8 @@ pub func gc_type(obj: i64) -> i64 {
         i = i + 1
     }
     return -1
+}
+pub func module_version() -> string {
+    return TRM_OBJMODEL_VERSION
 }
 }

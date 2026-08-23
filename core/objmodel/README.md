@@ -14,3 +14,9 @@
   统一对象身份，objmodel 关联类型）。
 
 验收：`tests/s6obj` 32 断言全过。完整动态加载/热更/诊断留待 P4 深化。
+
+## 状态（S7）诊断
+
+`diag.tie`（`trm_diag`）——**运行时内省诊断探针**：把 loader/interp、gc、mnn、objmodel、
+backend 契约矩阵汇总成统一诊断快照（模块头/计数/组件/版本/matrix_ok）+ 内省自检
+（反射 round-trip 逐条自洽）。验收 `tests/s7diag` 15 断言全过。P4「诊断 + 类型内省」落地。

@@ -1,0 +1,130 @@
+type tie<class>
+// core/objmodel/diag.tie —— 运行时内省诊断探针（命名空间 trm_diag）。
+// 对应设计 §3.4/§7 P4：诊断 + 类型内省（调试器/动态加载的公共底座之一，沿用 objmodel）。
+// 本文件把已就绪的引擎分量（loader/interp、gc、mnn、objmodel、registry 契约矩阵）汇总成
+// 一张统一的**内省诊断快照**，并做**内省自检**（对已加载模块逐一反射签名并 round-trip，
+// 校验反射逐条自洽）。纯 tie 逻辑，可单文件编译回归。
+// 调用：setup() → snapshot()（采集）→ entry(key) 取诊断项 → selfcheck() 内省自检 → report()。
+import "../frontend/loader.tie"
+import "../gc/gc.tie"
+import "../mnn/mnn.tie"
+import "./objmodel.tie"
+import "../backend/registry.tie"
+
+// 诊断项：平行表（key, value 均为 string）。
+var e_k: table<string>;
+var e_v: table<string>;
+
+namespace trm_diag {
+// 采集前初始化（幂等，联动各子 setup）。
+pub func setup() {
+    trm_objmodel.setup()
+    trm_backend.setup()
+    e_k = table_new_string()
+    e_v = table_new_string()
+}
+
+func add(key: string, val: string) {
+    table_push(e_k, key)
+    table_push(e_v, val)
+}
+
+// 采集一次内省诊断快照。
+pub func snapshot() {
+    e_k = table_new_string()
+    e_v = table_new_string()
+    // 模块头
+    add("pkg", trm_loader.pkg_name())
+    add("pkg_ver", trm_loader.pkg_version())
+    add("comp", trm_loader.comp_version())
+    // 结构计数
+    add("funcs", to_string(trm_loader.func_count()))
+    add("blocks", to_string(trm_loader.block_count()))
+    add("insts", to_string(trm_loader.inst_count()))
+    add("values", to_string(trm_loader.value_count()))
+    // 引擎分量
+    add("om_types", to_string(trm_objmodel.ty_count()))
+    add("gc_alloc", to_string(trm_gc.alloc_count()))
+    add("gc_live", to_string(trm_gc.live_count()))
+    add("mnn_coro", to_string(trm_mnn.coro_count()))
+    add("backs", to_string(trm_backend.backend_count()))
+    add("matrix_ok", to_string(matrix_ok()))
+    // 版本
+    add("v_om", trm_objmodel.module_version())
+    add("v_gc", trm_gc.module_version())
+    add("v_mnn", trm_mnn.module_version())
+}
+
+// 契约矩阵是否全 PASS（可执行后端无 FAIL）。
+func matrix_ok() -> i64 {
+    var bad: i64 = 0
+    var bi: i64 = 0
+    while bi < trm_backend.backend_count() {
+        if trm_backend.fail_count(bi) > 0 {
+            bad = bad + 1
+        }
+        bi = bi + 1
+    }
+    if bad > 0 {
+        return 0
+    }
+    return 1
+}
+
+// 内省自检：对每个已加载函数反射签名 → 反序列化 → round-trip，返回不一致计数（0=自洽）。
+pub func selfcheck() -> i64 {
+    var n = trm_loader.func_count()
+    var f: i64 = 0
+    var bad: i64 = 0
+    while f < n {
+        var sig = trm_objmodel.reflect_func_signature(f)
+        var pid = trm_objmodel.deserialize_sig(sig)
+        var re = reser(pid)
+        if re != sig {
+            bad = bad + 1
+        }
+        f = f + 1
+    }
+    return bad
+}
+
+// 诊断项访问器。
+pub func entry_count() -> i64 {
+    return len(e_k)
+}
+pub func entry(key: string) -> string {
+    var i: i64 = 0
+    while i < len(e_k) {
+        if e_k[i] == key {
+            return e_v[i]
+        }
+        i = i + 1
+    }
+    return ""
+}
+
+// 可读诊断报告。
+pub func report() -> string {
+    var s = "[runtime 诊断]\n"
+    var i: i64 = 0
+    while i < len(e_k) {
+        s = s + "  " + e_k[i] + " = " + e_v[i] + "\n"
+        i = i + 1
+    }
+    s = s + "  selfcheck = " + to_string(selfcheck())
+    return s
+}
+
+// 由反序列化记录再序列化（round-trip 校验）。
+func reser(pid: i64) -> string {
+    var ret = trm_objmodel.parsed_ret(pid)
+    var arity = trm_objmodel.parsed_arity(pid)
+    var params: table<i64> = table_new_i64()
+    var k: i64 = 0
+    while k < arity {
+        table_push(params, trm_objmodel.parsed_param(pid, k))
+        k = k + 1
+    }
+    return trm_objmodel.serialize_sig(trm_objmodel.parsed_name(pid), arity, params, ret)
+}
+}

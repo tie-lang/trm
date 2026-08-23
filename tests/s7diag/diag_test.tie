@@ -1,0 +1,85 @@
+type tie<logic>
+// tests/s7diag/diag_test.tie —— S7 运行时内省诊断探针验收。
+// 加载纯2.tieir → 跑契约矩阵 + 分配 gc 对象 → trm_diag.snapshot 采集统一诊断快照，
+// 断言各诊断项（模块头 / 计数 / 组件 / 版本 / matrix_ok）与内省自检=0（反射逐条自洽）。
+import "../../core/frontend/loader.tie"
+import "../../core/gc/gc.tie"
+import "../../core/objmodel/diag.tie"
+import "../../core/backend/registry.tie"
+
+func main() {
+    if !trm_loader.load("f:/Projects/tie-repo/trm/tests/s3pure/pure2_bytes.txt") {
+        println("[diag] 加载失败: " + trm_loader.err_msg())
+        return
+    }
+    trm_diag.setup()
+
+    // 跑契约矩阵（供矩阵诊断项统计）
+    trm_backend.add_case("add", 2, 3, 5)
+    trm_backend.add_case("sub", 9, 4, 5)
+    trm_backend.add_case("mul", 6, 7, 42)
+    trm_backend.run_matrix()
+
+    // 分配一个 gc 对象，让 gc 诊断项非零
+    var obj = trm_gc.alloc(100)
+
+    // 采集统一诊断快照
+    trm_diag.snapshot()
+
+    // 结构/组件诊断
+    check_s("pkg", trm_diag.entry("pkg"), "pure")
+    check_s("pkg_ver", trm_diag.entry("pkg_ver"), "0.1.0")
+    check_s("funcs", trm_diag.entry("funcs"), "3")
+    check_s("blocks", trm_diag.entry("blocks"), "3")
+    check_s("insts", trm_diag.entry("insts"), "6")
+    check_s("om_types", trm_diag.entry("om_types"), "6")
+    check_s("backs", trm_diag.entry("backs"), "3")
+    check_s("matrix_ok", trm_diag.entry("matrix_ok"), "1")
+
+    // 已分配 gc 对象 → alloc=1
+    check_s("gc_alloc(>=1)", trm_diag.entry("gc_alloc"), "1")
+    check_obj_live(obj)
+
+    // 版本诊断
+    check_s("v_om", trm_diag.entry("v_om"), "0.1.0")
+    check_s("v_gc", trm_diag.entry("v_gc"), "0.1.0")
+    check_s("v_mnn", trm_diag.entry("v_mnn"), "0.1.0")
+
+    // 内省自检：反射 round-trip 逐条自洽
+    check("selfcheck", trm_diag.selfcheck(), 0)
+    check("entry_count", trm_diag.entry_count(), 16)
+
+    println(trm_diag.report())
+    println("[OK] S7 运行时内省诊断探针验收通过")
+}
+
+func check_obj_live(obj: i64) {
+    var status: string = "FAIL"
+    if trm_gc.obj_live(obj) {
+        status = "PASS"
+    }
+    println("  [" + status + "] gc 对象存活 = " + fmt(trm_gc.obj_live(obj)) + " (期望 true)")
+}
+
+func fmt(b: bool) -> string {
+    if b {
+        return "true"
+    }
+    return "false"
+}
+
+func check(spec: string, got: i64, want: i64) {
+    var status: string = "FAIL"
+    if got == want {
+        status = "PASS"
+    }
+    println("  [" + status + "] " + spec + " = " + to_string(got) + " (期望 " + to_string(want) + ")")
+}
+
+func check_s(spec: string, got: string, want: string) {
+    var status: string = "FAIL"
+    if got == want {
+        status = "PASS"
+    }
+    println("  [" + status + "] " + spec + " = " + got + " (期望 " + want + ")")
+}

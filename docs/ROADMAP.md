@@ -20,6 +20,7 @@
 | **S4（完成）** | 引擎 gc / mnn（objmodel 属 P4，保持占位） | GC 探针 + 协程：gc_test / mnn_test 验收通过 |
 | **S5（完成）** | backend：tiejit（简易执行器）+ orcjit（独立 LLVM-MCJIT 驱动进程）+ registry（契约矩阵） | 统一契约矩阵：interp/tiejit/orcjit 三端同契一致性验收通过 |
 | **S6（完成）** | 引擎 objmodel（对象模型/反射底座） | 运行时类型查询 + 自动序列化 + 跨域身份，tests/s6obj 验收 |
+| **S7（完成）** | 运行时内省诊断（diag） | 统一诊断快照 + 内省自检，tests/s7diag 验收 |
 
 ## 3. S1 具体方案
 
@@ -98,6 +99,15 @@
   （`name:<t0>:<t1>:<ret>`）；跨域身份（签名 interning + gc 对象类型标）。
 - `core/frontend/loader.tie` 增 `func_param_type` 访问器，支撑类型反射。
 - 验收（`tests/s6obj`）：反射 add/sub/mul、round-trip、interning 稳定、gc 类型标，32 断言全过。
+
+### 3.7 S7 运行时内省诊断（完成）
+
+- `core/objmodel/diag.tie`（`trm_diag`）：统一诊断快照，汇总 loader（pkg/计数）、gc、
+  mnn、objmodel、backend 契约矩阵（matrix_ok）与各模块版本；`selfcheck()` 对已加载函数
+  逐一反射签名并 round-trip 校验（内省自洽）。
+- `core/objmodel/objmodel.tie` 增 `module_version`（版本约定一致）。
+- 验收（`tests/s7diag`）：诊断项 + gc 对象 + 版本 + selfcheck=0，15 断言全过。
+  P4「诊断 + 类型内省」落地。
 
 ## 4. 决策记录
 
