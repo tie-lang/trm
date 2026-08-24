@@ -15,6 +15,7 @@ $Dir = $PSScriptRoot
 $TrmRoot = Split-Path -Parent (Split-Path -Parent $Dir)
 $Demo = Join-Path $TrmRoot 'tests\s10_platform\platform_demo.tie'
 $PipeDemo = Join-Path $TrmRoot 'tests\s10_platform\pipe_demo.tie'
+$RunDemo = Join-Path $TrmRoot 'tests\s10_platform\run_demo.tie'
 if ($Tiec -eq "") { $Tiec = Join-Path (Split-Path -Parent (Split-Path -Parent $Dir)) '..\tie-main\compiler\tiec.exe' }
 if ($TieInterp -eq "") { $TieInterp = 'F:\Projects\tie-repo\tie-main\target\release\tie_interp.lib' }
 $env:TIE_INTERP_LIB = $TieInterp
@@ -68,6 +69,15 @@ if ($LASTEXITCODE -eq 0 -and (Test-Path $PipeExe)) {
     $pout = & $PipeExe 2>&1 | Out-String
     Report ($LASTEXITCODE -eq 0 -and $pout.Contains('进程管道回归通过')) "步骤5：进程管道捕获（结构化 CreateProcessW）读到 hello"
 } else { Report $false "步骤5：pipe_demo 编译失败" }
+
+# 6. 双向管道（结构化 CreateProcessW）：run('cmd /c set /p ...', 'hello') 读到 got:hello 且退出码 0
+$RunExe = Join-Path $TrmRoot 'tests\s10_platform\run_demo.exe'
+if (Test-Path $RunExe) { Remove-Item $RunExe }
+& $Tiec $RunDemo -o $RunExe *> $null
+if ($LASTEXITCODE -eq 0 -and (Test-Path $RunExe)) {
+    $rout = & $RunExe 2>&1 | Out-String
+    Report ($LASTEXITCODE -eq 0 -and $rout.Contains('双向管道回归通过')) "步骤6：双向管道（stdin→stdout 闭环 + 退出码）"
+} else { Report $false "步骤6：run_demo 编译失败" }
 
 Write-Host ""
 Write-Host "=== 汇总: PASS=$pass FAIL=$fail ==="

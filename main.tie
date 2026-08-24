@@ -49,6 +49,13 @@ func main() {
         trm_terminal.info("process.capture=[ " + pout + "]（坠入 hello 即管道通车）")
     }
 
+    // --- process：平台桥双向管道（结构化 CreateProcessW，stdin→stdout 闭环） ---
+    unsafe {
+        var rout = trm_process.run("cmd /c findstr .", "hello")
+        var rexit = trm_process.last_exit()
+        trm_terminal.info("process.run=[ " + rout + "] exit=" + to_string(rexit) + "（坠入 hello 即双向通车）")
+    }
+
     // --- env：环境变量 + 工作目录 ---
     var cwd = trm_env.cwd()
     var plen: i64 = len(trm_env.get("PATH"))

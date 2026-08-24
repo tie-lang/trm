@@ -1,0 +1,24 @@
+type tie<logic>
+// tests/s10_platform/run_demo.tie —— 双向管道回归驱动（结构化 CreateProcessW，非交互）
+// 验证 trm_platform.run：写 input 到子进程 stdin → 读子进程 stdout → last_exit() 查退出码。
+// findstr . 从 stdin 读行原样回显，验证 input→output 双向管道闭环。
+import "../../impl/impl-win32/platform_win32.tie"
+
+func main() {
+    unsafe {
+        var out = trm_platform.run("cmd /c findstr .", "hello")
+        var exit = trm_platform.last_exit()
+        println("[run] out=" + out + " exit=" + to_string(exit))
+        // 期望 stdout 首 5 字符为 hello 且退出码 0（findstr 原样回显 stdin 行）
+        if len(out) >= 5 && exit == 0 {
+            var got = str_char(out, 0) + str_char(out, 1) + str_char(out, 2) + str_char(out, 3) + str_char(out, 4)
+            if got == "hello" {
+                println("双向管道回归通过（stdin=hello → stdout=hello，exit=0）")
+            } else {
+                println("双向管道回归失败（内容异常：" + out + "）")
+            }
+        } else {
+            println("双向管道回归失败（空输出或退出码异常 exit=" + to_string(exit) + "）")
+        }
+    }
+}

@@ -32,6 +32,11 @@
   捕获子进程 stdout（repr(C) STARTUPINFOW/PROCESS_INFORMATION 经 addr_of 指针传参、
   SetHandleInformation 置写端可继承、手拼 UTF-16 命令行），`trm_process.capture` 接线；
   `regress-platform.ps1` 步骤5 capture('cmd /c echo hello') 读到 hello（结构化路径）。
+- 双向管道（S10c，preview.5）：`trm_platform.run(cmd, input)`——结构化 CreateProcessW 建**两条**
+  管道（pipeOut 子进程 stdout→父读、pipeIn 父写→子进程 stdin），写 input 关写端（EOF）后读 stdout
+  到 EOF；退出码经 `trm_platform.last_exit()`（errno 式，dll 导出边界不允许指针出参）查询。
+  `trm_process.run` / `trm_process.last_exit` 接线；`regress-platform.ps1` 步骤6
+  run('cmd /c findstr .', 'hello') → stdout=hello 且 exit=0（stdin→stdout 闭环）。
 - 结构化管道接入前提为 tiec repr(C) 窄字段（u32/i16）struct store 未收窄缺陷
   （`store i32` 但值仍 i64）+ 生成模块无 target datalayout 致结构体与 C ABI 偏移错位——
   两缺陷已由 tie-main 后端修复（store 收窄 + datalayout 对齐）；此前 `_popen`（libc）兜底

@@ -35,4 +35,16 @@ pub func run_ok(cmd: string) -> bool {
 pub unsafe func capture(cmd: string) -> string {
     return trm_platform.capture(cmd)
 }
+
+// 双向管道：写 input 到子进程 stdin（关闭即 EOF），读其 stdout 到 EOF，返回输出；
+// 退出码经 trm_process.last_exit() 查询（errno 式，dll 边界下不能指针出参）。
+// 与 capture 同走结构化 CreateProcessW，但建两条管道（stdin/stdout）；失败返回空串。
+pub unsafe func run(cmd: string, input: string) -> string {
+    return trm_platform.run(cmd, input)
+}
+
+// 最近一次 run 的退出码（0 = 成功或尚未 run）。
+pub unsafe func last_exit() -> i32 {
+    return trm_platform.last_exit()
+}
 }
