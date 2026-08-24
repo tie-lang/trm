@@ -2,6 +2,9 @@ type tie<logic>
 // main.tie：trm 库层基础功能回归/demo。
 // 依次调用 fs/process/env/clock/terminal 各模块，验证编译零错误 + 运行结果。
 
+// 平台桥（impl-win32）：单独回归（tests/s10_platform），见 impl/impl-win32/README；
+// tiec 深层/多导入展开序限制，暂不并入 main 汇总导入。
+
 import "./lib/fs.tie"
 import "./lib/process.tie"
 import "./lib/env.tie"

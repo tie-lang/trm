@@ -22,4 +22,10 @@
   P4 动态加载落地；新增 calc2 模块资产（`double`）。
 - 引擎 aot（S9）：`trm_aot` AOT 前端（tieir→LLVM IR 降级 + llc/clang 原生编译执行），
   P5 AOT 可选后端落地。
+- 平台桥（S10）：`impl/impl-win32` 一期——`trm_platform` `is_tty / raw_mode`（unsafe extern
+  桥 Win32 控制台），编译为 `trm_platform.dll`（M5 动态库，C LoadLibrary 可消费）；`regress-platform.ps1`
+  4 项全绿（.dll 编译 / 导出面 / C 冒烟 / tie 回归）。前置：tie-main extern 扩展 ptr/slice +
+  动态库边界放行 slice/repr(C) pod struct（两笔提交）。
+- 记录 tiec 坑：深层/多库传递导入含顶层 `unsafe extern`+`namespace` 的平台模块触发「语句只能
+  出现在文件顶层」展开序限制，平台桥由消费方显式 import 单独回归（见 impl/impl-win32/README）。
 - 记录 tiec 后端坑：链式/嵌套表元素复绑定易崩溃或挂起，S4 起统一用扁平 `table<i64>` 规避；S5b 又见库 TU 内 `break` 解析怪癖，改无换行输出 + 免 break 解析规避。

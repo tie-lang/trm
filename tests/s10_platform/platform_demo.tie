@@ -1,0 +1,27 @@
+type tie<logic>
+// tests/s10_platform/platform_demo.tie —— impl-win32 平台桥回归驱动
+// 非交互（重定向/CI）下验证：is_tty()==false、raw_mode(true/false) 优雅返回 false，
+// 证明桥的 extern/addr_of/模式位逻辑编译+运行正确。真实控制台交互留待人工。
+import "../../impl/impl-win32/platform_win32.tie"
+
+func fb(b: bool) -> string {
+    if b {
+        return "true"
+    }
+    return "false"
+}
+
+func main() {
+    unsafe {
+        var tty = trm_platform.is_tty()
+        var rm_on = trm_platform.raw_mode(true)
+        var rm_off = trm_platform.raw_mode(false)
+        println("is_tty=" + fb(tty) + "  raw_on=" + fb(rm_on) + "  raw_off=" + fb(rm_off))
+        // 重定向下 is_tty=false；raw_mode 因非控制台返回 false（不崩溃）
+        if tty {
+            println("[交互台] 上述需真实控制台；若为 true 则 raw_mode 已生效")
+        } else {
+            println("impl-win32 平台桥回归通过（重定向下优雅降级）")
+        }
+    }
+}

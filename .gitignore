@@ -3,6 +3,9 @@
 *.ll
 *.a
 *.lib
+*.dll
+*.exp
+*.obj
 
 # 构建缓存
 .tie-cache/
