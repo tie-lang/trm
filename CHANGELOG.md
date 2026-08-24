@@ -28,4 +28,10 @@
   动态库边界放行 slice/repr(C) pod struct、extern 无函数体越界读修复（三笔提交）。
 - 库里层接线：`lib/terminal` 增 `trm_terminal.is_tty`（转调 `trm_platform`），随 main 汇总
   传递导入接入（此前 tiec 深层/多导入对 extern 的越界读假报已修复，见 tie-main）。
+- 进程管道（S10b，preview.5）：`trm_platform.capture(cmd)`——`_popen(cmd,"r")` 建管道逐字节
+  读子进程 stdout 到 EOF（libc，无结构体 ABI），`trm_process.capture` 接线；`regress-platform.ps1`
+  增至 5 项全绿（新增步骤5：capture('cmd /c echo hello') 读到 hello）。
+- 记录 tiec 后端坑：repr(C) 窄字段（u32/i16）struct 的 store codegen 值未收窄到 i32
+  （`store i32` 但值仍 i64）——CreatePipe/CreateProcessW 的结构化管道（STARTUPINFOW/
+  PROCESS_INFORMATION 经指针传递）据此延后，待后端修复后接入。
 - 记录 tiec 后端坑：链式/嵌套表元素复绑定易崩溃或挂起，S4 起统一用扁平 `table<i64>` 规避；S5b 又见库 TU 内 `break` 解析怪癖，改无换行输出 + 免 break 解析规避。

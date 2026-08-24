@@ -43,6 +43,12 @@ func main() {
     var out = trm_process.output("echo trm-out")
     trm_terminal.info("process.code=" + to_string(exit_code) + "  out=" + out)
 
+    // --- process：平台桥管道捕获（_popen，非交互可验证） ---
+    unsafe {
+        var pout = trm_process.capture("cmd /c echo hello")
+        trm_terminal.info("process.capture=[ " + pout + "]（坠入 hello 即管道通车）")
+    }
+
     // --- env：环境变量 + 工作目录 ---
     var cwd = trm_env.cwd()
     var plen: i64 = len(trm_env.get("PATH"))

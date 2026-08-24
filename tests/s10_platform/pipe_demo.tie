@@ -1,0 +1,26 @@
+type tie<logic>
+// tests/s10_platform/pipe_demo.tie —— 进程管道回归驱动（_popen 捕获，非交互）
+// 验证 trm_platform.capture 经 libc 管道捕获子进程 stdout。
+import "../../impl/impl-win32/platform_win32.tie"
+
+func main() {
+    unsafe {
+        var out = trm_platform.capture("cmd /c echo hello")
+        println("[capture] " + out)
+        // 非交互回归：捕获非空且首单词为 hello（cmd 输出 "hello\r\n"）
+        if len(out) >= 5 {
+            var first = str_char(out, 0)
+            var second = str_char(out, 1)
+            var third = str_char(out, 2)
+            var fourth = str_char(out, 3)
+            var fifth = str_char(out, 4)
+            if first == "h" && second == "e" && third == "l" && fourth == "l" && fifth == "o" {
+                println("进程管道回归通过（捕获到 hello）")
+            } else {
+                println("进程管道回归失败（输出前缀异常）")
+            }
+        } else {
+            println("进程管道回归失败（空输出）")
+        }
+    }
+}

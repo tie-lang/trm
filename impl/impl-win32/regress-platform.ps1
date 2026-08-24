@@ -14,6 +14,7 @@ $ErrorActionPreference = "Continue"
 $Dir = $PSScriptRoot
 $TrmRoot = Split-Path -Parent (Split-Path -Parent $Dir)
 $Demo = Join-Path $TrmRoot 'tests\s10_platform\platform_demo.tie'
+$PipeDemo = Join-Path $TrmRoot 'tests\s10_platform\pipe_demo.tie'
 if ($Tiec -eq "") { $Tiec = Join-Path (Split-Path -Parent (Split-Path -Parent $Dir)) '..\tie-main\compiler\tiec.exe' }
 if ($TieInterp -eq "") { $TieInterp = 'F:\Projects\tie-repo\tie-main\target\release\tie_interp.lib' }
 $env:TIE_INTERP_LIB = $TieInterp
@@ -58,6 +59,15 @@ if ($LASTEXITCODE -eq 0 -and (Test-Path $DemoExe)) {
     $dout = & $DemoExe 2>&1 | Out-String
     Report ($LASTEXITCODE -eq 0 -and $dout.Contains('impl-win32 平台桥回归通过')) "步骤4：tie 侧平台桥回归（重定向降级）"
 } else { Report $false "步骤4：platform_demo 编译失败" }
+
+# 5. 进程管道捕获（_popen）：capture('cmd /c echo hello') 读到 hello
+$PipeExe = Join-Path $TrmRoot 'tests\s10_platform\pipe_demo.exe'
+if (Test-Path $PipeExe) { Remove-Item $PipeExe }
+& $Tiec $PipeDemo -o $PipeExe *> $null
+if ($LASTEXITCODE -eq 0 -and (Test-Path $PipeExe)) {
+    $pout = & $PipeExe 2>&1 | Out-String
+    Report ($LASTEXITCODE -eq 0 -and $pout.Contains('进程管道回归通过')) "步骤5：进程管道捕获（_popen）读到 hello"
+} else { Report $false "步骤5：pipe_demo 编译失败" }
 
 Write-Host ""
 Write-Host "=== 汇总: PASS=$pass FAIL=$fail ==="
