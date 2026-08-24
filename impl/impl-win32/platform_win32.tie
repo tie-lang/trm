@@ -5,11 +5,13 @@ type tie<class>
 //
 // 能力：
 //   - 终端：is_tty() / raw_mode(on)（Console 模式位）
-//   - 进程管道：capture(cmd) —— _popen 捕获子进程 stdout；write_cmd 写方向
+//   - 进程管道：capture(cmd) —— 结构化 CreatePipe/CreateProcessW 捕获子进程 stdout；
+//     write_cmd 写方向（_popen "w"）
 //
-// 说明：CreatePipe/CreateProcessW 的 STARTUPINFOW/SECURITY_ATTRIBUTES/PROCESS_INFORMATION
-// 需 repr(C) 窄字段（u32/i16）struct 精确布局经指针传递，而当前 tiec 对窄字段 struct 的
-// store 存在 codegen 缺陷（值未收窄到 i32）——留待后端修复后接入结构化管道，见 README。
+// 结构化管道：repr(C) 窄字段（u32/i16）struct（STARTUPINFOW/PROCESS_INFORMATION）经
+// addr_of 以 ptr 传给 Win32；SetHandleInformation 置写端可继承。此前受 tiec 窄字段
+// struct store 未收窄缺陷阻塞（store 留下的值仍是 i64），后端修复（store 收窄 +
+// datalayout 对齐，见 tie-main）后接入。
 //
 // 交付形态：tiec 本文件 --shared → trm_platform.dll（M5 动态库，C/外部宿主 LoadLibrary）；
 // 库层 trm.terminal / trm.process 经 import 直接消费同一源码。
@@ -19,15 +21,52 @@ const TP_STD_OUTPUT: i64 = -11   // STD_OUTPUT_HANDLE（is_tty 探测对象）
 const TP_STD_INPUT: i64 = -10    // STD_INPUT_HANDLE（raw_mode 设置对象）
 const TP_ENABLE_ECHO_INPUT: i64 = 4
 const TP_ENABLE_LINE_INPUT: i64 = 2
-const TP_EOF: i64 = -1           // fgetc 文件尾
 
-// ---------- Win32 / libc API（unsafe extern，仅标量/指针/string 形参） ----------
+// ---------- repr(C) 结构化（CreateProcessW/CreatePipe 用；窄字段 pad 对齐由
+//           tiec datalayout 保证，与 Win32 ABI 精确一致） ----------
+// STARTUPINFOW（cb、dwX..dwFlags 等 u32 在 60 之前；lpReserved2 落 72、hStdInput 落 80，sizeof=104）
+repr(C) struct TP_STARTUPINFOW {
+    var cb: u32 = 0
+    var lpReserved: i64 = 0
+    var lpDesktop: i64 = 0
+    var lpTitle: i64 = 0
+    var dwX: u32 = 0
+    var dwY: u32 = 0
+    var dwXSize: u32 = 0
+    var dwYSize: u32 = 0
+    var dwXCountChars: u32 = 0
+    var dwYCountChars: u32 = 0
+    var dwFillAttribute: u32 = 0
+    var dwFlags: u32 = 0
+    var wShowWindow: u16 = 0
+    var cbReserved2: u16 = 0
+    var lpReserved2: i64 = 0
+    var hStdInput: i64 = 0
+    var hStdOutput: i64 = 0
+    var hStdError: i64 = 0
+}
+// PROCESS_INFORMATION（sizeof=24）
+repr(C) struct TP_PROCESS_INFORMATION {
+    var hProcess: i64 = 0
+    var hThread: i64 = 0
+    var dwProcessId: u32 = 0
+    var dwThreadId: u32 = 0
+}
+
+// ---------- Win32 / libc API（unsafe extern，标量/指针/string/repr(C) 形参） ----------
 unsafe extern fn GetStdHandle(nStdHandle: i64) -> i64
 unsafe extern fn GetConsoleMode(hConsole: i64, lpMode: ptr<i64>) -> i32
 unsafe extern fn SetConsoleMode(hConsole: i64, dwMode: i64) -> i32
-// libc 进程管道（msvcrt _popen/_pclose/fgetc/fwrite；FILE* 即 i64 句柄，无结构体 ABI）
+// 结构化进程管道（CreatePipe/CreateProcessW/ReadFile/句柄）
+unsafe extern fn CreatePipe(hr: ptr<i64>, hw: ptr<i64>, sa: i64, n: i32) -> i32
+unsafe extern fn SetHandleInformation(h: i64, mask: u32, flags: u32) -> i32
+unsafe extern fn CreateProcessW(app: i64, cmd: ptr<u8>, pa: i64, ta: i64, inh: i32, flags: i32, env: i64, cwd: i64, si: ptr<TP_STARTUPINFOW>, pi: ptr<TP_PROCESS_INFORMATION>) -> i32
+unsafe extern fn ReadFile(h: i64, buf: ptr<u8>, n: u32, pread: ptr<u32>, ov: i64) -> i32
+unsafe extern fn WaitForSingleObject(h: i64, ms: u32) -> u32
+unsafe extern fn CloseHandle(h: i64) -> i32
+unsafe extern fn GetLastError() -> u32
+// libc 进程写管道（msvcrt _popen/_pclose/fwrite；FILE* 即 i64 句柄）
 unsafe extern fn _popen(cmd: string, mode: string) -> i64
-unsafe extern fn fgetc(stream: i64) -> i32
 unsafe extern fn fwrite(buf: string, size: i64, count: i64, stream: i64) -> i64
 unsafe extern fn _pclose(stream: i64) -> i64
 
@@ -68,25 +107,74 @@ pub unsafe func raw_mode(on: bool) -> bool {
     return ok != 0
 }
 
-// ---------- 进程管道（_popen 捕获） ----------
-// 捕获命令输出：`_popen(cmd,"r")` 建管道读子进程 stdout 字节流，fgetc 逐字节读到 EOF，
-// 返回全部输出内容（ASCII 精确；UTF-8 多字节逐字节近似）。失败/空输出返回 ""。
+// ---------- 结构化进程管道（CreatePipe/CreateProcessW 捕获） ----------
+
+// ASCII 字符串 → UTF-16LE 字节缓冲（逐码点写 u16 word 两个 u8 字节）。
+// CreateProcessW 的 LPCWSTR 需 UTF-16，tie string 是 UTF-8 char*，须手拼。
+unsafe fn tp_widewstr(s: string, out: ptr<u8>) {
+    var n: i64 = str_len(s)
+    var i: i64 = 0
+    while i < n {
+        var cp: i64 = char_code(str_char(s, i))   // ASCII 码点 = 字节值
+        deref_write(ptr_add(out, 2 * i), as_u8(cp & 255))
+        deref_write(ptr_add(out, 2 * i + 1), as_u8(0))
+        i = i + 1
+    }
+    deref_write(ptr_add(out, 2 * n), as_u8(0))
+    deref_write(ptr_add(out, 2 * n + 1), as_u8(0))
+}
+
+// 捕获命令输出：结构化 CreatePipe/CreateProcessW（STARTUPINFOW/PROCESS_INFORMATION
+// 经 addr_of 以 ptr 传 Win32，SetHandleInformation 置写端可继承），父进程读子进程
+// stdout 到最后一块（子进程独占写端、退出即 EOF）。失败/空输出返回 ""；上限 8MB 防异常不返回。
 pub unsafe func capture(cmd: string) -> string {
-    var fp = _popen(cmd, "r")
-    if fp == 0 {
+    var hr: i64 = 0
+    var hw: i64 = 0
+    var si: TP_STARTUPINFOW = TP_STARTUPINFOW()
+    var pi: TP_PROCESS_INFORMATION = TP_PROCESS_INFORMATION()
+    var rcount: u32 = 0
+    var buf: ptr<u8> = alloc(4096)
+    if CreatePipe(addr_of(hr), addr_of(hw), 0, 0) == 0 {
         return ""
     }
+    // 写端置可继承（子进程继承写端）；读端清继承位 → 子进程退出后 EOF
+    SetHandleInformation(hw, 1u32, 1u32)
+    SetHandleInformation(hr, 1u32, 0u32)
+    // 结构化 STARTUPINFOW：cb=sizeof(104)，附加 std 句柄到管道写端
+    si.cb = as_u32(104)
+    si.dwFlags = as_u32(256)          // STARTF_USESTDHANDLES = 0x100
+    si.hStdInput = GetStdHandle(-10)  // STD_INPUT_HANDLE（子进程不读 stdin）
+    si.hStdOutput = hw
+    si.hStdError = hw
+    // 手拼 UTF-16 命令行（含文件名（全模式名））
+    var wcmd: ptr<u8> = alloc((str_len(cmd) + 1) * 2)
+    tp_widewstr(cmd, wcmd)
+    if CreateProcessW(0, wcmd, 0, 0, 1i32, 0i32, 0, 0, addr_of(si), addr_of(pi)) == 0 {
+        return ""
+    }
+    // 父进程关闭写端 → 子进程独占写端，退出即 EOF
+    CloseHandle(hw)
     var out: string = ""
     var guard: i64 = 0
     while guard < 8388608 {   // 上限 8MB，防异常不返回
-        var c = fgetc(fp)
-        if as_i64(c) == TP_EOF {
+        rcount = as_u32(0)
+        if ReadFile(hr, buf, 4096u32, addr_of(rcount), 0) == 0 {
             break
         }
-        out = out + str_from_code(as_i64(c))
+        var j: i64 = 0
+        while j < as_i64(rcount) {
+            out = out + str_from_code(as_i64(deref(ptr_add(buf, j))))
+            j = j + 1
+        }
+        if rcount == 0u32 {
+            break
+        }
         guard = guard + 1
     }
-    _pclose(fp)
+    CloseHandle(hr)
+    WaitForSingleObject(pi.hProcess, 0xFFFFFFFFu32)
+    CloseHandle(pi.hProcess)
+    CloseHandle(pi.hThread)
     return out
 }
 

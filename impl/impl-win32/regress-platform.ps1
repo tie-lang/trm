@@ -60,13 +60,13 @@ if ($LASTEXITCODE -eq 0 -and (Test-Path $DemoExe)) {
     Report ($LASTEXITCODE -eq 0 -and $dout.Contains('impl-win32 平台桥回归通过')) "步骤4：tie 侧平台桥回归（重定向降级）"
 } else { Report $false "步骤4：platform_demo 编译失败" }
 
-# 5. 进程管道捕获（_popen）：capture('cmd /c echo hello') 读到 hello
+# 5. 进程管道捕获（结构化 CreateProcessW）：capture('cmd /c echo hello') 读到 hello
 $PipeExe = Join-Path $TrmRoot 'tests\s10_platform\pipe_demo.exe'
 if (Test-Path $PipeExe) { Remove-Item $PipeExe }
 & $Tiec $PipeDemo -o $PipeExe *> $null
 if ($LASTEXITCODE -eq 0 -and (Test-Path $PipeExe)) {
     $pout = & $PipeExe 2>&1 | Out-String
-    Report ($LASTEXITCODE -eq 0 -and $pout.Contains('进程管道回归通过')) "步骤5：进程管道捕获（_popen）读到 hello"
+    Report ($LASTEXITCODE -eq 0 -and $pout.Contains('进程管道回归通过')) "步骤5：进程管道捕获（结构化 CreateProcessW）读到 hello"
 } else { Report $false "步骤5：pipe_demo 编译失败" }
 
 Write-Host ""

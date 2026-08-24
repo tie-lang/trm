@@ -1,6 +1,6 @@
 type tie<class>
 // lib/process.tie：trm 库层② 进程（命名空间 trm_process）。
-// 包装 std/process：libc system 桥 + 重定向捕获输出；平台桥管道捕获（_popen）经 unsafe 接入。
+// 包装 std/process：libc system 桥 + 重定向捕获输出；平台桥结构化管道捕获（CreateProcessW）经 unsafe 接入。
 // 调用：import 后 trm_process.exec("...") / trm_process.output("...") / trm_process.capture("...")。
 import "../stdlib/process.tie"
 import "../impl/impl-win32/platform_win32.tie"
@@ -30,8 +30,8 @@ pub func run_ok(cmd: string) -> bool {
     return process.exec_code(cmd) == 0
 }
 
-// 平台桥管道捕获：`_popen(cmd,"r")` 逐字节读子进程 stdout 到 EOF（ASCII 精确）。
-// 重定向/管道均可非交互使用；失败返回空串。
+// 平台桥结构化管道捕获：`CreatePipe/CreateProcessW` 捕获子进程 stdout（repr(C) STARTUPINFOW/
+// PROCESS_INFORMATION 经指针传 Win32）。重定向/管道均可非交互使用；失败返回空串。
 pub unsafe func capture(cmd: string) -> string {
     return trm_platform.capture(cmd)
 }

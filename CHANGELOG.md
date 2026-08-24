@@ -28,10 +28,12 @@
   动态库边界放行 slice/repr(C) pod struct、extern 无函数体越界读修复（三笔提交）。
 - 库里层接线：`lib/terminal` 增 `trm_terminal.is_tty`（转调 `trm_platform`），随 main 汇总
   传递导入接入（此前 tiec 深层/多导入对 extern 的越界读假报已修复，见 tie-main）。
-- 进程管道（S10b，preview.5）：`trm_platform.capture(cmd)`——`_popen(cmd,"r")` 建管道逐字节
-  读子进程 stdout 到 EOF（libc，无结构体 ABI），`trm_process.capture` 接线；`regress-platform.ps1`
-  增至 5 项全绿（新增步骤5：capture('cmd /c echo hello') 读到 hello）。
-- 记录 tiec 后端坑：repr(C) 窄字段（u32/i16）struct 的 store codegen 值未收窄到 i32
-  （`store i32` 但值仍 i64）——CreatePipe/CreateProcessW 的结构化管道（STARTUPINFOW/
-  PROCESS_INFORMATION 经指针传递）据此延后，待后端修复后接入。
+- 进程管道（S10b，preview.5）：`trm_platform.capture(cmd)`——结构化 `CreatePipe/CreateProcessW`
+  捕获子进程 stdout（repr(C) STARTUPINFOW/PROCESS_INFORMATION 经 addr_of 指针传参、
+  SetHandleInformation 置写端可继承、手拼 UTF-16 命令行），`trm_process.capture` 接线；
+  `regress-platform.ps1` 步骤5 capture('cmd /c echo hello') 读到 hello（结构化路径）。
+- 结构化管道接入前提为 tiec repr(C) 窄字段（u32/i16）struct store 未收窄缺陷
+  （`store i32` 但值仍 i64）+ 生成模块无 target datalayout 致结构体与 C ABI 偏移错位——
+  两缺陷已由 tie-main 后端修复（store 收窄 + datalayout 对齐）；此前 `_popen`（libc）兜底
+  方案随之以结构化 CreateProcessW 取代。
 - 记录 tiec 后端坑：链式/嵌套表元素复绑定易崩溃或挂起，S4 起统一用扁平 `table<i64>` 规避；S5b 又见库 TU 内 `break` 解析怪癖，改无换行输出 + 免 break 解析规避。

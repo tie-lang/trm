@@ -1,6 +1,6 @@
 type tie<logic>
-// tests/s10_platform/pipe_demo.tie —— 进程管道回归驱动（_popen 捕获，非交互）
-// 验证 trm_platform.capture 经 libc 管道捕获子进程 stdout。
+// tests/s10_platform/pipe_demo.tie —— 进程管道回归驱动（结构化 CreateProcessW 捕获，非交互）
+// 验证 trm_platform.capture 经 CreatePipe/CreateProcessW 捕获子进程 stdout。
 import "../../impl/impl-win32/platform_win32.tie"
 
 func main() {
