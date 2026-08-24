@@ -2,8 +2,8 @@ type tie<logic>
 // main.tie：trm 库层基础功能回归/demo。
 // 依次调用 fs/process/env/clock/terminal 各模块，验证编译零错误 + 运行结果。
 
-// 平台桥（impl-win32）：单独回归（tests/s10_platform），见 impl/impl-win32/README；
-// tiec 深层/多导入展开序限制，暂不并入 main 汇总导入。
+// 平台桥（impl-win32）经 terminal 的库内转接接入（trm_terminal.is_tty）；
+// terminal 的传递导入已使平台层随 main 汇总自动展开（深层/多导入展开序限制修复后）。
 
 import "./lib/fs.tie"
 import "./lib/process.tie"
@@ -13,6 +13,7 @@ import "./lib/terminal.tie"
 import "./lib/session.tie"
 import "./lib/data.tie"
 import "./lib/net.tie"
+import "./impl/impl-win32/platform_win32.tie"
 
 // trm 整体发行版本号（主/次/补丁；各模块版本独立见各 lib/x.tie 的 module_version）。
 const TRM_VERSION: string = "0.1.0"
@@ -74,7 +75,11 @@ func main() {
     // --- net：模块可用性（版本+链接通过）；socket e2e 需并发，S3 M:N 再做 ---
     trm_terminal.info("net.module_ok（编译+链接已通过；socket e2e 延后至 S3）")
 
-    // --- terminal：日志辅助 ---
+    // --- terminal：日志辅助 + 平台桥 TTY 探测 ---
+    unsafe {
+        var tty = trm_terminal.is_tty()
+        trm_terminal.info("terminal.is_tty=" + fmt_bool(tty))
+    }
     trm_terminal.ok("库层基础功能回归通过")
 }
 

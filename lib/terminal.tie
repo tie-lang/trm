@@ -7,6 +7,9 @@ type tie<class>
 // trm.terminal 模块版本号（各模块独立版本化）。
 const TRM_TERMINAL_VERSION: string = "0.1.0"
 
+// 平台桥（impl-win32）：TTY 探测 / 原始模式由 trm_platform 提供（unsafe extern）。
+import "../impl/impl-win32/platform_win32.tie"
+
 namespace trm_terminal {
 // ---------- 模块版本 ----------
 pub func module_version() -> string {
@@ -14,6 +17,11 @@ pub func module_version() -> string {
 }
 
 // ---------- 终端 ----------
+// 输出句柄是否接真实控制台（重定向/管道 → false）；转调平台桥。
+pub unsafe func is_tty() -> bool {
+    return trm_platform.is_tty()
+}
+
 pub func line(msg: string) {
     println(msg)
 }

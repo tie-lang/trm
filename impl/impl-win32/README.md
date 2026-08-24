@@ -21,14 +21,8 @@ pwsh impl/impl-win32/regress-platform.ps1   # 4 项：.dll 编译 / 导出面 / 
 ```
 
 tie 侧回归驱动：`tests/s10_platform/platform_demo.tie`（重定向下 is_tty=false、raw 优雅 false）。
-
-## 已知限制（tiec 导入展开）
-
-`platform_win32.tie` 含顶层 `unsafe extern` + `namespace`，当它被 **多个库文件浅层/深层传递导入**进
-一个 logic 主文件时会触发「语句只能出现在文件顶层」的 tiec 导入展开序限制（单组导入如
-`terminal+net+platform`、`fs+process+env+terminal` 均可，全量 8 库 + platform 则崩）。故平台桥
-由消费方**显示 import** 单独回归，暂不并入 `main.tie` 汇总导入。此属编译器限制，待 tiec 导入
-展开修复后即可并入库层。
+库里层接线：`lib/terminal` 经传递导入接入 `trm_platform`，消费方 `trm_terminal.is_tty()`（随
+`main.tie` 汇总回归；所需的 tiec 深层多导入修复已并入 tie-main）。
 
 ## 二期候选
 
