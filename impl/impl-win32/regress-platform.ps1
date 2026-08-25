@@ -100,6 +100,24 @@ if (Test-Path $EchoExe) {
     } else { Report $false "步骤7：interactive_demo 编译失败" }
 } else { Report $false "步骤7：echo_child.c 编译失败（clang 不可用？）" }
 
+# 8. 多会话交错 avail/read 回归（S10e，tiec alloc 补头扫描根因修复验证）：
+#    同一循环体内交错 avail(a)/read(a)/avail(b)/read(b)，断言两会话输出无串线/无丢失——
+#    tiec S10e 前该形态会字节串线/丢失（alloc 缓冲被垃圾 strlen 补头扫描）。
+$InterleaveDemo = Join-Path $TrmRoot 'tests\s10_platform\interleave_demo.tie'
+$InterleaveExe = Join-Path $TrmRoot 'tests\s10_platform\interleave_demo.exe'
+if (Test-Path $EchoExe) {
+    if (Test-Path $InterleaveExe) { Remove-Item $InterleaveExe }
+    Push-Location $TrmRoot
+    & $Tiec $InterleaveDemo -o $InterleaveExe *> $null
+    Pop-Location
+    if ($LASTEXITCODE -eq 0 -and (Test-Path $InterleaveExe)) {
+        Push-Location $TrmRoot
+        $ilout = & $InterleaveExe 2>&1 | Out-String
+        Pop-Location
+        Report ($LASTEXITCODE -eq 0 -and $ilout.Contains('多会话交错回归通过')) "步骤8：多会话交错 avail/read（无串线/丢失，tiec S10e 根因修复）"
+    } else { Report $false "步骤8：interleave_demo 编译失败" }
+} else { Report $false "步骤8：echo_child.exe 缺失（步骤7 未先编译）" }
+
 Write-Host ""
 Write-Host "=== 汇总: PASS=$pass FAIL=$fail ==="
 exit ($fail -gt 0 ? 1 : 0)

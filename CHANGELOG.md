@@ -45,8 +45,12 @@
   交互式 stdio **stdin 不提前关闭、实时收发**（替代 run 的批处理式限制），mnn 从探针转实战。
   验收：`regress-platform.ps1` 步骤7 `interactive_demo`（单会话两轮实时收发 + 双会话泵
   peak≤M=2 且两会话均获调度），子进程 `echo_child.c` 每行实时回显模拟 REPL。
-- 记录 tiec 后端/平台事实坑：多会话交错 `run_avail`/`run_read` 字节串线（泵只推调度不代读，
-  逐会话输出 read 直读）；cmd/findstr/sort 等 batch 工具在 stdin 管道未 EOF 时不逐行 flush
+- 多会话交错 `run_avail`/`run_read` 的字节串线/丢失根因——tiec 对 `alloc` 原始缓冲做垃圾
+  `strlen` 补头扫描——已由 tie-main S10e 修复（alloc 走 s21_raw_alloc_str，K_PTR 返回绕开
+  扫描）；泵「只推调度、逐会话 read 直读」保留为推荐稳定形态。新增回归
+  `tests/s10_platform/interleave_demo.tie`：同一循环体交错 avail(a)/read(a)/avail(b)/read(b)
+  两会话输出无串线/无丢失（regress-platform 步骤 8）。
+- 记录 tiec 后端/平台事实坑：cmd/findstr/sort 等 batch 工具在 stdin 管道未 EOF 时不逐行 flush
   （实时回显需 REPL 类程序）；全局标量初值不可靠（g_worker 须显式 set_workers）；PeekNamedPipe
   NULL 缓冲会失败。
 - 结构化管道接入前提为 tiec repr(C) 窄字段（u32/i16）struct store 未收窄缺陷

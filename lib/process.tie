@@ -14,8 +14,9 @@ const TRM_PROCESS_VERSION: string = "0.1.0"
 // 会话同时注册为 trm_mnn 协程（M:N 调度）：pump_round 每轮至多推进 M 个活跃会话各一个
 // 阶段（tick 的 M:N 上界），多会话交错获得调度时间片、互不饿死；会话输出由调用方
 // read() 直读（阻塞等应答——交互式本相）。全程扁平 table<i64>（无嵌套表复绑定）。
-// 已知 tiec 构建限制：多会话交错 run_avail/run_read 会出现字节串线，故泵不做管道
-// 直读合并，仅推进调度；逐会话输出经 read() 直读（与 capture 同款单会话读路径）。
+// 注：多会话交错 run_avail/run_read 字节串线/丢失的根因（tiec 对 alloc 缓冲做垃圾
+// strlen 补头扫描）已由 tie-main S10e 修复；泵不代读管道/逐会话 read 直读仍是推荐的
+// 稳定形态（见 tests/s10_platform/interleave_demo.tie 回归）。
 const PUMP_LEASE: i64 = 1048576    // 会话泵相位数（每次 pump_round 推进 1，活跃会话长期驻留）
 var g_p_cid: table<i64>;           // sid → mnn 协程 cid（-1 = 未注册）
 var g_p_step: table<i64>;          // 上次观测的各会话推进步数
@@ -115,8 +116,8 @@ pub unsafe func mnn_step(sid: i64) -> i64 {
 }
 
 // M:N 会话泵：一轮至多推进 mnn 调度器的 M 个活跃会话（trm_mnn.tick 的 M:N 上界），
-// 使多会话交错获得调度时间片。I/O 由调用方 read()/write() 直读直写（该 tiec 构建
-// 下多会话交错 run_avail/run_read 会串线，故泵只推进调度，不代读管道）。返回本轮推进会话数。
+// 使多会话交错获得调度时间片。I/O 由调用方 read()/write() 直读直写——泵只推进调度、
+// 不代读管道（逐会话输出直读为推荐稳定形态；根因已由 tiec S10e 修复）。返回本轮推进会话数。
 pub unsafe func pump_round() -> i64 {
     var n = trm_mnn.tick()
     var sid: i64 = 0

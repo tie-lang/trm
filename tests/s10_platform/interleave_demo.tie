@@ -1,0 +1,108 @@
+type tie<logic>
+// tests/s10_platform/interleave_demo.tie —— 多会话交错 run_avail/run_read 缺陷复现驱动
+// 背景：该 tiec 构建下，多会话**交错**调用 avail（PeekNamedPipe）与 read（ReadFile+alloc+
+// deref 循环）会出现字节串线/丢失（unsafe 指针流缺陷家族）。此前 trm 以「泵只推调度、
+// 逐会话 read 直读」规避；本驱动直接以交错循环复现该形态，验证底层缺陷是否仍存在，
+// 为 tiec 后端真实修复提供可失败用例（修复后应全绿，且 ba/bb 无交叉、无丢失）。
+// 子进程用 echo_child.exe（每行实时回显 "E:" + 行 + "\r\n"）。需在仓库根目录运行。
+import "../../lib/process.tie"
+
+const CHILD: string = "tests\\s10_platform\\echo_child.exe"
+
+// 判子串包含（ASCII；手写扫描）
+func _has(hay: string, needle: string) -> bool {
+    var hn: i64 = str_len(hay)
+    var nn: i64 = str_len(needle)
+    if nn == 0 {
+        return true
+    }
+    var i: i64 = 0
+    while i + nn <= hn {
+        var j: i64 = 0
+        var ok = true
+        while j < nn {
+            if str_char(hay, i + j) != str_char(needle, j) {
+                ok = false
+            }
+            j = j + 1
+        }
+        if ok {
+            return true
+        }
+        i = i + 1
+    }
+    return false
+}
+
+// 一轮交错泵：先 avail(a) 再 read(a)，再 avail(b) 再 read(b)——两会话在同一循环体内
+// 交错调用 run_avail/run_read（复现原泵缺陷形态）。返回 (a帧串, b帧串, a读取字节, b读取字节)。
+unsafe func drain_round(a: i64, b: i64) -> (ra: string, rb: string, na: i64, nb: i64) {
+    var ra: string = ""
+    var rb: string = ""
+    var na: i64 = 0
+    var nb: i64 = 0
+    var av_a = trm_process.avail(a)
+    if av_a > 0 {
+        ra = trm_process.read(a)
+        na = av_a
+    }
+    var av_b = trm_process.avail(b)
+    if av_b > 0 {
+        rb = trm_process.read(b)
+        nb = av_b
+    }
+    return (ra, rb, na, nb)
+}
+
+func main() {
+    unsafe {
+        trm_mnn.set_workers(2)
+        println("== 多会话交错 avail/read 复现 ==")
+        var a = trm_process.spawn(CHILD)
+        trm_process.sleep(30)
+        var b = trm_process.spawn(CHILD)
+        if a < 0 || b < 0 {
+            println("会话启动失败（需在仓库根目录运行）")
+            return
+        }
+        var ba: string = ""
+        var bb: string = ""
+        trm_process.write(a, "a1\r\n")
+        trm_process.write(b, "b1\r\n")
+        trm_process.write(a, "a2\r\n")
+        trm_process.write(b, "b2\r\n")
+        var i: i64 = 0
+        var total: i64 = 0
+        while i < 200 {
+            var (ra, rb, na, nb) = drain_round(a, b)
+            ba = ba + ra
+            bb = bb + rb
+            total = total + na + nb
+            trm_process.sleep(2)
+            i = i + 1
+        }
+        println("[ba] len=" + to_string(len(ba)))
+        println("[ba] [" + ba + "]")
+        println("[bb] len=" + to_string(len(bb)))
+        println("[bb] [" + bb + "]")
+        println("[total_read] " + to_string(total))
+        // 完整性断言：ba 含 a1/a2 且不含 b 行；bb 含 b1/b2 且不含 a 行
+        var bad_a = _has(ba, "E:b")
+        var bad_b = _has(bb, "E:a")
+        var ok = _has(ba, "E:a1") && _has(ba, "E:a2") && _has(bb, "E:b1") && _has(bb, "E:b2") && !bad_a && !bad_b
+        if ok {
+            println("交错读取无串线/无丢失（ba/bb 各含本会话两行，无交叉）")
+        } else {
+            println("缺陷复现：交错 avail/read 串线或丢失（bad_a=" + to_string(bad_a) + " bad_b=" + to_string(bad_b) + "）")
+        }
+        trm_process.close_in(a)
+        trm_process.close_in(b)
+        trm_process.wait(a)
+        trm_process.wait(b)
+        if ok {
+            println("多会话交错回归通过")
+        } else {
+            println("多会话交错回归失败")
+        }
+    }
+}
