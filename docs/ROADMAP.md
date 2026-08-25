@@ -23,6 +23,8 @@
 | **S7（完成）** | 运行时内省诊断（diag） | 统一诊断快照 + 内省自检，tests/s7diag 验收 |
 | **S8（完成）** | 动态加载 + 模块生命周期（module 注册表） | load/内省/invoke/unload 生命周期，tests/s8mod 验收 |
 | **S9（完成）** | AOT 前端（tieir → LLVM IR → 原生编译执行） | llc/clang 原生执行与 interp 契约一致，tests/s9aot 验收 |
+| **S10c（完成）** | 平台桥 win32 进程管道：`capture` 结构化捕获 + `run` 批处理式双向管道 | regress-platform.ps1 步骤 1-6 全绿（pipes） |
+| **S10d（完成）** | 平台桥交互式会话（stdin 不关、实时收发）+ trm_mnn 双会话泵（M:N 调度） | regress-platform.ps1 步骤 7 全绿（interactive_demo） |
 
 ## 3. S1 具体方案
 
@@ -127,6 +129,28 @@
 - 依赖 D:\LLVM（llc/clang），经 `process`/`fs` 桥；产物写 `%TEMP%\trm-aot`（不入库）。
 - 验收（`tests/s9aot`）：add/sub/mul 各 5 断言全过（AOT 执行==期望，且 AOT 结果== interp，
   与 orcjit JIT 同为「interp 基准 + 契约一致」）。完整 IR 降级留待 P3 深化。
+
+### 3.10 S10d 交互式进程会话 + mnn 泵（完成）
+
+- `impl/impl-win32/platform_win32.tie`（`trm_platform`）：交互式会话原语——`spawn_run` 结构化建
+  两条管道后 `CreateProcessW` 启动并**保留 stdin 写端**（子进程不见 EOF），`run_write`（写不关）、
+  `run_read`（阻塞读一帧）、`run_avail`（PeekNamedPipe 非阻塞探测）、`run_close_in`（EOF 收尾）、
+  `run_wait`（等待+回收，幂等）、`msleep`（Sleep 让出时间片）。会话状态用扁平 `table<i64>` 
+  并行表（sid 即下标），规避嵌套表复绑定缺陷。
+- `lib/process.tie`（`trm_process`）：包装会话原语（spawn/write/read/avail/close_in/wait/sleep）
+  并将会话注册为 `trm_mnn` 协程（`PUMP_LEASE` 相位数）；`pump_round` 调 mnn `tick`，每轮
+  **至多推进 M 个会话各一阶段**（M:N 上界），多会话交错获调度时间片、互不饿死；`mnn_step(sid)`
+  暴露会话被推进的步数（≥1 即获调度）。
+- 验收（`regress-platform.ps1` 步骤 7）：`interactive_demo` —— 场景1 单会话两轮实时收发
+  （stdin 全程不关、write→read 应答闭环、EOF 收尾 exit=0）；场景2 双会话泵（peak≤workers=2 且
+  两会话 step≥1，输出逐会话 read 直读互不串线）。子进程 `echo_child.c` 每行实时回显模拟 REPL。
+- **新增 tiec 后端坑（同 §3.3/3.4 类）**：多会话**交错** `run_avail`/`run_read` 在该 tiec 构建下
+  会出现字节串线/丢失（unsafe 指针流缺陷，同 `byte_read` 内置崩溃一族），表现为第二会话
+  读写消失或输出交叉；规避：泵只推调度不代读管道，逐会话输出经 `read()` 直读（谓词化
+  单会话读路径，与 capture/run 同款）。另：全局标量初值不可靠（`g_worker=2` 落 0），须
+  显式 `set_workers`（S4 探针既有做法）；PeekNamedPipe NULL 缓冲会失败须给真实 1 字节缓冲。
+- **Windows 平台事实**：cmd/findstr/sort 等 batch 工具在 stdin 为匿名管道且未 EOF 时不逐行
+  flush（等待 EOF 才排空），实时交互回显需 REPL 类程序——验收用 `echo_child` 模拟。
 
 ## 4. 决策记录
 

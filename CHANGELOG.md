@@ -37,6 +37,18 @@
   到 EOF；退出码经 `trm_platform.last_exit()`（errno 式，dll 导出边界不允许指针出参）查询。
   `trm_process.run` / `trm_process.last_exit` 接线；`regress-platform.ps1` 步骤6
   run('cmd /c findstr .', 'hello') → stdout=hello 且 exit=0（stdin→stdout 闭环）。
+- 交互式会话（S10d，preview.6）：`trm_platform` 会话原语——`spawn_run(cmd)`（结构化建两条
+  管道后启动子进程并**保留 stdin 写端**，返回会话 id）/ `run_write`（写不关）/ `run_read`（阻塞
+  读一帧）/ `run_avail`（PeekNamedPipe 非阻塞探测）/ `run_close_in`（EOF 收尾）/ `run_wait`
+  （等待+回收，幂等）/ `msleep`；`trm_process` 包装（spawn/write/read/avail/close_in/wait/
+  sleep）并注册会话为 `trm_mnn` 协程，`pump_round` 每轮至多推进 M 个会话（M:N 上界）——
+  交互式 stdio **stdin 不提前关闭、实时收发**（替代 run 的批处理式限制），mnn 从探针转实战。
+  验收：`regress-platform.ps1` 步骤7 `interactive_demo`（单会话两轮实时收发 + 双会话泵
+  peak≤M=2 且两会话均获调度），子进程 `echo_child.c` 每行实时回显模拟 REPL。
+- 记录 tiec 后端/平台事实坑：多会话交错 `run_avail`/`run_read` 字节串线（泵只推调度不代读，
+  逐会话输出 read 直读）；cmd/findstr/sort 等 batch 工具在 stdin 管道未 EOF 时不逐行 flush
+  （实时回显需 REPL 类程序）；全局标量初值不可靠（g_worker 须显式 set_workers）；PeekNamedPipe
+  NULL 缓冲会失败。
 - 结构化管道接入前提为 tiec repr(C) 窄字段（u32/i16）struct store 未收窄缺陷
   （`store i32` 但值仍 i64）+ 生成模块无 target datalayout 致结构体与 C ABI 偏移错位——
   两缺陷已由 tie-main 后端修复（store 收窄 + datalayout 对齐）；此前 `_popen`（libc）兜底

@@ -3,10 +3,22 @@ type tie<class>
 // 包装 std/process：libc system 桥 + 重定向捕获输出；平台桥结构化管道捕获（CreateProcessW）经 unsafe 接入。
 // 调用：import 后 trm_process.exec("...") / trm_process.output("...") / trm_process.capture("...")。
 import "../stdlib/process.tie"
+import "../core/mnn/mnn.tie"
 import "../impl/impl-win32/platform_win32.tie"
 
 // trm.process 模块版本号（各模块独立版本化）。
 const TRM_PROCESS_VERSION: string = "0.1.0"
+
+// ---------- 交互式进程会话（S10d，mnn 实战接线） ----------
+// 平台桥原语（spawn_run/run_write/run_read/run_avail/run_close_in/run_wait）的库层包装；
+// 会话同时注册为 trm_mnn 协程（M:N 调度）：pump_round 每轮至多推进 M 个活跃会话各一个
+// 阶段（tick 的 M:N 上界），多会话交错获得调度时间片、互不饿死；会话输出由调用方
+// read() 直读（阻塞等应答——交互式本相）。全程扁平 table<i64>（无嵌套表复绑定）。
+// 已知 tiec 构建限制：多会话交错 run_avail/run_read 会出现字节串线，故泵不做管道
+// 直读合并，仅推进调度；逐会话输出经 read() 直读（与 capture 同款单会话读路径）。
+const PUMP_LEASE: i64 = 1048576    // 会话泵相位数（每次 pump_round 推进 1，活跃会话长期驻留）
+var g_p_cid: table<i64>;           // sid → mnn 协程 cid（-1 = 未注册）
+var g_p_step: table<i64>;          // 上次观测的各会话推进步数
 
 namespace trm_process {
 // ---------- 模块版本 ----------
@@ -46,5 +58,78 @@ pub unsafe func run(cmd: string, input: string) -> string {
 // 最近一次 run 的退出码（0 = 成功或尚未 run）。
 pub unsafe func last_exit() -> i32 {
     return trm_platform.last_exit()
+}
+
+// ---------- 交互式进程会话（S10d） ----------
+// 启动交互式子进程并注册到 mnn 调度器。返回会话 id；失败返回 -1。
+pub unsafe func spawn(cmd: string) -> i64 {
+    var sid = trm_platform.spawn_run(cmd)
+    if sid < 0 {
+        return -1
+    }
+    while len(g_p_cid) <= sid {
+        table_push(g_p_cid, -1)
+        table_push(g_p_step, 0)
+    }
+    g_p_cid[sid] = trm_mnn.spawn(PUMP_LEASE)
+    return sid
+}
+
+// 向会话 stdin 写数据（不关闭写入端）。返回实际写入字节数；失败返回 -1。
+pub unsafe func write(sid: i64, data: string) -> i32 {
+    return trm_platform.run_write(sid, data)
+}
+
+// 阻塞读会话 stdout 一帧（至多 4096 字节；子进程退出即 EOF 返回空串）。
+pub unsafe func read(sid: i64) -> string {
+    return trm_platform.run_read(sid)
+}
+
+// 非阻塞探测会话 stdout 当前可读字节数（-1 = 无效/断管）。
+pub unsafe func avail(sid: i64) -> i64 {
+    return trm_platform.run_avail(sid)
+}
+
+// 关闭会话 stdin 写端 → 子进程读到 EOF（排空输出后退出）。
+pub unsafe func close_in(sid: i64) -> i32 {
+    return trm_platform.run_close_in(sid)
+}
+
+// 等待会话退出并返回退出码；同时回收句柄与会话状态。
+pub unsafe func wait(sid: i64) -> i32 {
+    return trm_platform.run_wait(sid)
+}
+
+// 让出当前线程 ms 毫秒（实时轮询循环让子进程获得调度时间片）。
+pub unsafe func sleep(ms: i64) {
+    trm_platform.msleep(ms)
+}
+
+// 会话在 mnn 调度器中的已推进步数（≥1 即获过调度；M:N 上界观测用）。
+pub unsafe func mnn_step(sid: i64) -> i64 {
+    var cid = g_p_cid[sid]
+    if cid < 0 {
+        return -1
+    }
+    return trm_mnn.coro_done_step(cid)
+}
+
+// M:N 会话泵：一轮至多推进 mnn 调度器的 M 个活跃会话（trm_mnn.tick 的 M:N 上界），
+// 使多会话交错获得调度时间片。I/O 由调用方 read()/write() 直读直写（该 tiec 构建
+// 下多会话交错 run_avail/run_read 会串线，故泵只推进调度，不代读管道）。返回本轮推进会话数。
+pub unsafe func pump_round() -> i64 {
+    var n = trm_mnn.tick()
+    var sid: i64 = 0
+    while sid < len(g_p_cid) {
+        var cid = g_p_cid[sid]
+        if cid >= 0 {
+            var st = trm_mnn.coro_done_step(cid)
+            if st > g_p_step[sid] {
+                g_p_step[sid] = st
+            }
+        }
+        sid = sid + 1
+    }
+    return n
 }
 }

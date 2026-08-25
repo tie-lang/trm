@@ -1,0 +1,158 @@
+type tie<logic>
+// tests/s10_platform/interactive_demo.tie —— 交互式双向管道回归驱动（S10d）
+// 子进程用 echo_child.exe（每行实时回显，模拟 REPL 程序；Windows 控制台工具在
+// stdin 未 EOF 时不逐行 flush，不适合交互式验收）。需在仓库根目录运行
+// （spawn 用相对路径 tests\s10_platform\echo_child.exe）。
+// 场景1（直接对话，stdin 不关）：spawn → write → read（实时拿应答）→ 再 write →
+//   read → close_in（EOF）→ wait。全程 stdin 保持开启，实时收发。
+// 场景2（mnn 双会话泵）：两个 echo_child 会话注册为 trm_mnn 协程，pump_round 每轮
+//   至多推进 M 个会话各一阶段（排空可用输出），两会话交错推进、互不饿死；
+//   断言峰值推进 ≤ workers()（M:N 上界）且两会话都获调度（输出均命中）。
+import "../../lib/process.tie"
+
+const CHILD: string = "tests\\s10_platform\\echo_child.exe"
+
+// 判子串包含（ASCII；手写扫描，避免依赖 std/string 的查找 API）
+func _has(hay: string, needle: string) -> bool {
+    var hn: i64 = str_len(hay)
+    var nn: i64 = str_len(needle)
+    if nn == 0 {
+        return true
+    }
+    var i: i64 = 0
+    while i + nn <= hn {
+        var j: i64 = 0
+        var ok = true
+        while j < nn {
+            if str_char(hay, i + j) != str_char(needle, j) {
+                ok = false
+            }
+            j = j + 1
+        }
+        if ok {
+            return true
+        }
+        i = i + 1
+    }
+    return false
+}
+
+// 轮询等待会话有可读输出（至多 3s）；有数据返回 true，超时返回 false（防阻塞挂死）。
+func _poll(sid: i64) -> bool {
+    unsafe {
+        var i: i64 = 0
+        while i < 300 {
+            var a = trm_process.avail(sid)
+            if a > 0 {
+                return true
+            }
+            trm_process.sleep(10)
+            i = i + 1
+        }
+        return false
+    }
+}
+
+func main() {
+    unsafe {
+        // 该 tiec 构建下全局标量初值不可靠（g_worker 默认落 0），须显式设置 M:N worker 池
+        trm_mnn.set_workers(2)
+        println("== 场景1：直接对话（stdin 不关，实时收发） ==")
+        var s1 = trm_process.spawn(CHILD)
+        if s1 < 0 {
+            println("交互式会话启动失败（需在仓库根目录运行）")
+            return
+        }
+        // 第一轮：写一行（不关 stdin），阻塞读实时应答
+        var wc1 = trm_process.write(s1, "hello1\r\n")
+        var r1 = trm_process.read(s1)
+        println("[1] wrote=" + to_string(wc1) + " got=[" + r1 + "]")
+        // 第二轮：再写一行，再读应答 —— 会话仍在，stdin 未 EOF
+        var wc2 = trm_process.write(s1, "hello2\r\n")
+        var r2 = trm_process.read(s1)
+        println("[2] wrote=" + to_string(wc2) + " got=[" + r2 + "]")
+        // 收尾：关 stdin（EOF）→ 等待退出
+        trm_process.close_in(s1)
+        var ec1 = trm_process.wait(s1)
+        println("[exit] " + to_string(ec1))
+        var ok1 = wc1 == 8 && wc2 == 8 && _has(r1, "E:hello1") && _has(r2, "E:hello2") && ec1 == 0
+        if ok1 {
+            println("场景1通过（两轮实时收发，stdin 保持开启，退出码 0）")
+        } else {
+            println("场景1失败")
+        }
+
+        println("== 场景2：mnn 双会话泵（M:N 轮询） ==")
+        // 分批 spawn + 小睡：规避该 tiec 构建下创建期误编译窗口
+        var a = trm_process.spawn(CHILD)
+        trm_process.sleep(30)
+        var b = trm_process.spawn(CHILD)
+        if a < 0 || b < 0 {
+            println("双会话启动失败")
+            return
+        }
+        trm_process.sleep(30)
+        trm_process.write(a, "a1\r\n")
+        trm_process.write(b, "b1\r\n")
+        var ph: i64 = 0
+        var peak: i64 = 0
+        while ph < 10 {
+            var n = trm_process.pump_round()
+            if n > peak {
+                peak = n
+            }
+            trm_process.sleep(5)
+            ph = ph + 1
+        }
+        trm_process.sleep(30)
+        trm_process.write(a, "a2\r\n")
+        trm_process.write(b, "b2\r\n")
+        ph = 0
+        while ph < 10 {
+            var n2 = trm_process.pump_round()
+            if n2 > peak {
+                peak = n2
+            }
+            trm_process.sleep(5)
+            ph = ph + 1
+        }
+        // 每会话输出经 read 直读（轮询等应答，超时防挂死）
+        var ra1: string = ""
+        var ra2: string = ""
+        if _poll(a) {
+            ra1 = trm_process.read(a)
+        }
+        if _poll(a) {
+            ra2 = trm_process.read(a)
+        }
+        var rb1: string = ""
+        var rb2: string = ""
+        if _poll(b) {
+            rb1 = trm_process.read(b)
+        }
+        if _poll(b) {
+            rb2 = trm_process.read(b)
+        }
+        println("[A] " + ra1 + ra2)
+        println("[B] " + rb1 + rb2)
+        var sa = trm_process.mnn_step(a)
+        var sb = trm_process.mnn_step(b)
+        println("[mnn] peak_per_round=" + to_string(peak) + " workers=" + to_string(trm_mnn.workers()) + " step_a=" + to_string(sa) + " step_b=" + to_string(sb))
+        trm_process.close_in(a)
+        trm_process.close_in(b)
+        var ea = trm_process.wait(a)
+        var eb = trm_process.wait(b)
+        var ok2 = _has(ra1 + ra2, "E:a1") && _has(ra1 + ra2, "E:a2") && _has(rb1 + rb2, "E:b1") && _has(rb1 + rb2, "E:b2") && ea == 0 && eb == 0 && peak <= trm_mnn.workers() && peak >= 1 && sa >= 1 && sb >= 1
+        if ok2 {
+            println("场景2通过（双会话交错推进，M:N 上界峰值≤" + to_string(trm_mnn.workers()) + "）")
+        } else {
+            println("场景2失败")
+        }
+
+        if ok1 && ok2 {
+            println("交互式双向管道回归通过（实时收发 + mnn 泵）")
+        } else {
+            println("交互式双向管道回归失败")
+        }
+    }
+}

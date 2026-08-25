@@ -16,6 +16,7 @@ $TrmRoot = Split-Path -Parent (Split-Path -Parent $Dir)
 $Demo = Join-Path $TrmRoot 'tests\s10_platform\platform_demo.tie'
 $PipeDemo = Join-Path $TrmRoot 'tests\s10_platform\pipe_demo.tie'
 $RunDemo = Join-Path $TrmRoot 'tests\s10_platform\run_demo.tie'
+$InterDemo = Join-Path $TrmRoot 'tests\s10_platform\interactive_demo.tie'
 if ($Tiec -eq "") { $Tiec = Join-Path (Split-Path -Parent (Split-Path -Parent $Dir)) '..\tie-main\compiler\tiec.exe' }
 if ($TieInterp -eq "") { $TieInterp = 'F:\Projects\tie-repo\tie-main\target\release\tie_interp.lib' }
 $env:TIE_INTERP_LIB = $TieInterp
@@ -78,6 +79,26 @@ if ($LASTEXITCODE -eq 0 -and (Test-Path $RunExe)) {
     $rout = & $RunExe 2>&1 | Out-String
     Report ($LASTEXITCODE -eq 0 -and $rout.Contains('双向管道回归通过')) "步骤6：双向管道（stdin→stdout 闭环 + 退出码）"
 } else { Report $false "步骤6：run_demo 编译失败" }
+
+# 7. 交互式双向管道（S10d）：spawn 后 stdin 保持开启、两轮实时收发 + mnn 双会话泵
+#    子进程 echo_child.exe（逐行实时回显，模拟 REPL；需先在 trm 根目录编译，demo 用相对路径 spawn）
+$EchoC = Join-Path $TrmRoot 'tests\s10_platform\echo_child.c'
+$EchoExe = Join-Path $TrmRoot 'tests\s10_platform\echo_child.exe'
+$InterExe = Join-Path $TrmRoot 'tests\s10_platform\interactive_demo.exe'
+if (Test-Path $EchoExe) { Remove-Item $EchoExe }
+& clang $EchoC -o $EchoExe *> $null
+if (Test-Path $EchoExe) {
+    if (Test-Path $InterExe) { Remove-Item $InterExe }
+    Push-Location $TrmRoot
+    & $Tiec $InterDemo -o $InterExe *> $null
+    Pop-Location
+    if ($LASTEXITCODE -eq 0 -and (Test-Path $InterExe)) {
+        Push-Location $TrmRoot
+        $iout = & $InterExe 2>&1 | Out-String
+        Pop-Location
+        Report ($LASTEXITCODE -eq 0 -and $iout.Contains('交互式双向管道回归通过')) "步骤7：交互式双向管道（实时收发 + mnn 泵）"
+    } else { Report $false "步骤7：interactive_demo 编译失败" }
+} else { Report $false "步骤7：echo_child.c 编译失败（clang 不可用？）" }
 
 Write-Host ""
 Write-Host "=== 汇总: PASS=$pass FAIL=$fail ==="

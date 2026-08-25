@@ -25,6 +25,13 @@ const TP_ENABLE_LINE_INPUT: i64 = 2
 // ---------- 全局状态（须在命名空间外定义） ----------
 var tp_last_exit: i32 = 0   // 最近一次 run 的退出码（last_exit 查询；errno 式）
 
+// ---------- 交互式进程会话状态（须在命名空间外定义；扁平 table<i64> 并行表，sid 即下标） ----------
+var tp_s_hr: table<i64>;    // 会话 stdout 读端（父读子输出）
+var tp_s_iw: table<i64>;    // 会话 stdin 写端（父写子输入；0 = 已关）
+var tp_s_proc: table<i64>;  // 会话进程句柄
+var tp_s_thr: table<i64>;   // 会话主线程句柄
+var tp_s_act: table<i64>;   // 1 = 会话活跃
+
 // ---------- repr(C) 结构化（CreateProcessW/CreatePipe 用；窄字段 pad 对齐由
 //           tiec datalayout 保证，与 Win32 ABI 精确一致） ----------
 // STARTUPINFOW（cb、dwX..dwFlags 等 u32 在 60 之前；lpReserved2 落 72、hStdInput 落 80，sizeof=104）
@@ -61,6 +68,7 @@ unsafe extern fn GetStdHandle(nStdHandle: i64) -> i64
 unsafe extern fn GetConsoleMode(hConsole: i64, lpMode: ptr<i64>) -> i32
 unsafe extern fn SetConsoleMode(hConsole: i64, dwMode: i64) -> i32
 // 结构化进程管道（CreatePipe/CreateProcessW/ReadFile/句柄）
+unsafe extern fn PeekNamedPipe(h: i64, buf: ptr<u8>, n: u32, pread: ptr<u32>, pavail: ptr<u32>, pmsg: i64) -> i32
 unsafe extern fn CreatePipe(hr: ptr<i64>, hw: ptr<i64>, sa: i64, n: i32) -> i32
 unsafe extern fn SetHandleInformation(h: i64, mask: u32, flags: u32) -> i32
 unsafe extern fn CreateProcessW(app: i64, cmd: ptr<u8>, pa: i64, ta: i64, inh: i32, flags: i32, env: i64, cwd: i64, si: ptr<TP_STARTUPINFOW>, pi: ptr<TP_PROCESS_INFORMATION>) -> i32
@@ -70,6 +78,7 @@ unsafe extern fn GetExitCodeProcess(h: i64, pcode: ptr<u32>) -> i32
 unsafe extern fn WaitForSingleObject(h: i64, ms: u32) -> u32
 unsafe extern fn CloseHandle(h: i64) -> i32
 unsafe extern fn GetLastError() -> u32
+unsafe extern fn Sleep(ms: u32) -> i32
 // libc 进程写管道（msvcrt _popen/_pclose/fwrite；FILE* 即 i64 句柄）
 unsafe extern fn _popen(cmd: string, mode: string) -> i64
 unsafe extern fn fwrite(buf: string, size: i64, count: i64, stream: i64) -> i64
@@ -280,6 +289,163 @@ pub unsafe func run(cmd: string, input: string) -> string {
 
 // 最近一次 run 的退出码（0 = 成功或尚未 run；errno 式，供 dll 边界下查询）。
 pub unsafe func last_exit() -> i32 {
+    return tp_last_exit
+}
+
+// 让出当前线程 ms 毫秒（Win32 Sleep；供实时轮询循环让子进程获得调度时间片）。
+pub unsafe func msleep(ms: i64) {
+    if ms <= 0 {
+        return
+    }
+    Sleep(as_u32(ms))
+}
+
+// ---------- 交互式进程会话（S10d） ----------
+// 与 run 的批处理式（写完全部 input 即关 stdin EOF，再读 stdout 到 EOF）不同：
+// 会话启动后**保留 stdin 写端**（子进程不见 EOF），调用方按需实时 write/read 多轮，
+// 直到主动 run_close_in（子进程读到 EOF）收尾。会话句柄与活跃位见文件头 tp_s_* 并行表
+// （扁平规避嵌套表复绑定缺陷）；句柄回收与幂等清理由 run_wait 兜底。
+
+// 启动交互式子进程：建两条管道（pipeOut 子 stdout→父读、pipeIn 父写→子 stdin），
+// CreateProcessW 启动后**父进程保留 stdin 写端**（run 会在写完后关闭）。返回会话 id；
+// 失败返回 -1。句柄按 id 存入并行表，供 write/read/avail/close_in/wait/free 使用。
+pub unsafe func spawn_run(cmd: string) -> i64 {
+    var id: i64 = len(tp_s_hr)
+    table_push(tp_s_hr, 0)
+    table_push(tp_s_iw, 0)
+    table_push(tp_s_proc, 0)
+    table_push(tp_s_thr, 0)
+    table_push(tp_s_act, 0)
+    var hr: i64 = 0
+    var hw: i64 = 0
+    var ir: i64 = 0
+    var iw: i64 = 0
+    var si: TP_STARTUPINFOW = TP_STARTUPINFOW()
+    var pi: TP_PROCESS_INFORMATION = TP_PROCESS_INFORMATION()
+    if CreatePipe(addr_of(hr), addr_of(hw), 0, 0) == 0 {
+        return -1
+    }
+    if CreatePipe(addr_of(ir), addr_of(iw), 0, 0) == 0 {
+        CloseHandle(hr)
+        CloseHandle(hw)
+        return -1
+    }
+    // 子进程侧句柄置可继承；父进程侧清继承位
+    SetHandleInformation(hw, 1u32, 1u32)
+    SetHandleInformation(ir, 1u32, 1u32)
+    SetHandleInformation(hr, 1u32, 0u32)
+    SetHandleInformation(iw, 1u32, 0u32)
+    // 结构化 STARTUPINFOW：stdin/out/err 三句柄接管道
+    si.cb = as_u32(104)
+    si.dwFlags = as_u32(256)          // STARTF_USESTDHANDLES = 0x100
+    si.hStdInput = ir
+    si.hStdOutput = hw
+    si.hStdError = hw
+    var wcmd: ptr<u8> = alloc((str_len(cmd) + 1) * 2)
+    tp_widewstr(cmd, wcmd)
+    if CreateProcessW(0, wcmd, 0, 0, 1i32, 0i32, 0, 0, addr_of(si), addr_of(pi)) == 0 {
+        CloseHandle(hr)
+        CloseHandle(hw)
+        CloseHandle(ir)
+        CloseHandle(iw)
+        return -1
+    }
+    // 父进程释放子进程侧句柄副本（子进程已继承）；**保留 stdin 写端**（交互态）
+    CloseHandle(hw)
+    CloseHandle(ir)
+    tp_s_hr[id] = hr
+    tp_s_iw[id] = iw
+    tp_s_proc[id] = pi.hProcess
+    tp_s_thr[id] = pi.hThread
+    tp_s_act[id] = 1
+    return id
+}
+
+// 向会话 stdin 写数据（不关闭写入端）。返回实际写入字节数；失败/会话无效返回 -1。
+pub unsafe func run_write(sid: i64, data: string) -> i32 {
+    if sid < 0 || sid >= len(tp_s_iw) || tp_s_act[sid] == 0 {
+        return -1
+    }
+    var n: i64 = str_len(data)
+    if n == 0 {
+        return 0
+    }
+    var ibuf: ptr<u8> = alloc(n + 1)
+    tp_ascii_buf(data, ibuf)
+    var written: u32 = 0
+    if WriteFile(tp_s_iw[sid], ibuf, as_u32(n), addr_of(written), 0) == 0 {
+        return 0
+    }
+    return as_i32(written)
+}
+
+// 非阻塞探测会话 stdout 当前可读字节数（PeekNamedPipe）；-1 = 会话无效/断管。
+pub unsafe func run_avail(sid: i64) -> i64 {
+    if sid < 0 || sid >= len(tp_s_hr) || tp_s_act[sid] == 0 {
+        return -1
+    }
+    var nb: ptr<u8> = alloc(1)   // 真实探针缓冲（NULL 缓冲 PeekNamedPipe 会失败）
+    var got: u32 = 0
+    var total: u32 = 0
+    if PeekNamedPipe(tp_s_hr[sid], nb, 1u32, addr_of(got), addr_of(total), 0) == 0 {
+        return -1
+    }
+    return as_i64(total)
+}
+
+// 阻塞读会话 stdout 一帧（至多 4096 字节；子进程退出即 EOF 返回空串）。
+// 用于实时对话：先 read 等应答，再 write 下一轮输入。
+pub unsafe func run_read(sid: i64) -> string {
+    if sid < 0 || sid >= len(tp_s_hr) || tp_s_act[sid] == 0 {
+        return ""
+    }
+    var rcount: u32 = 0
+    var buf: ptr<u8> = alloc(4096)
+    if ReadFile(tp_s_hr[sid], buf, 4096u32, addr_of(rcount), 0) == 0 {
+        return ""   // EOF（子进程退出/断管）
+    }
+    var out: string = ""
+    var j: i64 = 0
+    while j < as_i64(rcount) {
+        out = out + str_from_code(as_i64(deref(ptr_add(buf, j))))
+        j = j + 1
+    }
+    return out
+}
+
+// 关闭会话 stdin 写端 → 子进程读到 EOF（收尾阶段：子进程排空输出后退出）。
+pub unsafe func run_close_in(sid: i64) -> i32 {
+    if sid < 0 || sid >= len(tp_s_iw) || tp_s_act[sid] == 0 {
+        return -1
+    }
+    if tp_s_iw[sid] != 0 {
+        CloseHandle(tp_s_iw[sid])
+        tp_s_iw[sid] = 0
+    }
+    return 1
+}
+
+// 等待会话进程退出并返回退出码；同时回收进程句柄与会话状态（幂等，可重复调用）。
+pub unsafe func run_wait(sid: i64) -> i32 {
+    if sid < 0 || sid >= len(tp_s_proc) || tp_s_act[sid] == 0 {
+        return -1
+    }
+    WaitForSingleObject(tp_s_proc[sid], 0xFFFFFFFFu32)
+    var ec: u32 = 0
+    if GetExitCodeProcess(tp_s_proc[sid], addr_of(ec)) != 0 {
+        tp_last_exit = as_i32(ec)
+    }
+    CloseHandle(tp_s_proc[sid])
+    CloseHandle(tp_s_thr[sid])
+    CloseHandle(tp_s_hr[sid])
+    if tp_s_iw[sid] != 0 {
+        CloseHandle(tp_s_iw[sid])
+        tp_s_iw[sid] = 0
+    }
+    tp_s_proc[sid] = 0
+    tp_s_thr[sid] = 0
+    tp_s_hr[sid] = 0
+    tp_s_act[sid] = 0
     return tp_last_exit
 }
 
