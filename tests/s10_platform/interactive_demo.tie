@@ -6,8 +6,9 @@ type tie<logic>
 // 场景1（直接对话，stdin 不关）：spawn → write → read（实时拿应答）→ 再 write →
 //   read → close_in（EOF）→ wait。全程 stdin 保持开启，实时收发。
 // 场景2（mnn 双会话泵）：两个 echo_child 会话注册为 trm_mnn 协程，pump_round 每轮
-//   至多推进 M 个会话各一阶段（排空可用输出），两会话交错推进、互不饿死；
-//   断言峰值推进 ≤ workers()（M:N 上界）且两会话都获调度（输出均命中）。
+//   至多推进 M 个会话各一阶段（只推调度、不代读管道——该 tiec 构建下多会话交错
+//   run_avail/run_read 会字节串线/丢失，逐会话输出由调用方 read 直读），两会话
+//   交错推进、互不饿死；断言峰值推进 ≤ workers()（M:N 上界）且两会话都获调度。
 import "../../lib/process.tie"
 
 const CHILD: string = "tests\\s10_platform\\echo_child.exe"
