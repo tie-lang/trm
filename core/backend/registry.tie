@@ -44,7 +44,7 @@ pub func setup() {
     }
     table_push(b_name, "interp"); table_push(b_stat, 1)
     table_push(b_name, "tiejit"); table_push(b_stat, 1)
-    table_push(b_name, "orcjit"); table_push(b_stat, 1)   // LLVM MCJIT 驱动（需先 build-orcjit.ps1）
+    table_push(b_name, "orcjit"); table_push(b_stat, 1)   // LLVM MCJIT 驱动（需先 build-orcjit.tsh.tie）
     b_pass = table_new_i64(); table_push(b_pass, 0); table_push(b_pass, 0); table_push(b_pass, 0)
     b_fail = table_new_i64(); table_push(b_fail, 0); table_push(b_fail, 0); table_push(b_fail, 0)
     c_name = table_new_string(); c_a = table_new_i64(); c_b = table_new_i64()

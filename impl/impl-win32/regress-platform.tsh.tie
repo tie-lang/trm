@@ -1,0 +1,92 @@
+type tie<tsh>
+// impl/impl-win32/regress-platform.tsh.tie —— trm 平台桥（Win32）构建 + 回归
+// (tsh 角色移植，替代 regress-platform.ps1)
+// ============================================================================
+// 用法（**须在 impl/impl-win32 目录下执行**，tsh 以 cwd() 定位）：
+//   <tshell> -f regress-platform.tsh.tie
+// tiec 路径 / TIE_INTERP_LIB 可经环境变量 TIE_TIEC / TIE_INTERP_LIB 覆盖（对齐原脚本参数）。
+// 覆盖：① 平台模块编 .dll（tiec --shared → trm_platform.dll）② 导出面(is_tty/raw_mode)
+// ③ C 冒烟（LoadLibrary+GetProcAddress，ABI 不崩）④ tie 侧回归驱动(s10_platform/*_demo.tie)
+// ⑤ 进程管道捕获 ⑥ 双向管道 ⑦ 交互式双向管道(mnn 泵) ⑧ 多会话交错 avail/read。
+// tsh 逐行求值 → 每个 if/else 块必须在其所在物理行内闭合（单行控制块，对齐 run.tsh.tie）；
+// 外部命令经 exec_code / exec_output（`cmd /c` 包裹）；含子串判定经 exec_output→findstr。
+// 注：tsh 行级 `exit <N>` 收字面量且不能置于 if 体内，退出码成功路径 0（失败只打汇总，
+// 不退出非零，为已知能力差异）。
+
+var dir = cwd()
+var tiec = get_env("TIE_TIEC")
+if str_len(tiec) == 0 { tiec = "..\\..\\..\\tie-main\\compiler\\tiec.exe" }
+var tieinterp = get_env("TIE_INTERP_LIB")
+if str_len(tieinterp) == 0 { tieinterp = "F:\\Projects\\tie-repo\\tie-main\\target\\release\\tie_interp.lib" }
+set_env("TIE_INTERP_LIB", tieinterp)
+
+var pass: i64 = 0
+var fail: i64 = 0
+var ro = "D:\\LLVM\\bin\\llvm-readobj.exe"
+var rc: i64 = 0
+
+println("=== trm 平台桥（impl-win32）回归（tiec=" + tiec + "）===")
+
+// ---------- 1) 平台模块 → trm_platform.dll ----------
+var dll = dir + "\\trm_platform.dll"
+var c1 = exec_code("cmd /c del " + dll + " >nul 2>&1")
+rc = exec_code("cmd /c " + tiec + " platform_win32.tie --shared -o " + dll + " >nul 2>&1")
+if rc == 0 && file_exists(dll) { println("PASS 步骤1：平台模块编译为 trm_platform.dll"); pass = pass + 1 } else { println("FAIL 步骤1：平台模块编译为 trm_platform.dll"); fail = fail + 1 }
+
+// ---------- 2) 导出面 ----------
+var o2: i64 = 0
+if !file_exists(ro) { ro = "llvm-readobj" }
+if file_exists(dll) { var syms2 = exec_output("cmd /c " + ro + " --coff-exports " + dll + " 2>&1"); var _w2 = file_write("_exports_reg.txt", syms2); var e1 = exec_code("cmd /c findstr /C:\"trm_platform$is_tty\" _exports_reg.txt >nul 2>&1"); var e2 = exec_code("cmd /c findstr /C:\"trm_platform$raw_mode\" _exports_reg.txt >nul 2>&1"); if e1 == 0 && e2 == 0 { o2 = 1 } }
+if o2 == 1 { println("PASS 步骤2：导出面 is_tty/raw_mode"); pass = pass + 1 } else { println("FAIL 步骤2：导出面 is_tty/raw_mode"); fail = fail + 1 }
+
+// ---------- 3) C 冒烟 ----------
+var o3: i64 = 0
+var cexe = dir + "\\trm_platform_c.exe"
+if file_exists(dll) { var _d3 = exec_code("cmd /c del " + cexe + " >nul 2>&1"); var _b3 = exec_code("cmd /c clang trm_platform_c.c -o " + cexe + " >nul 2>&1"); if file_exists(cexe) { var out3 = exec_output("cmd /c " + cexe + " " + dll + " 2>&1"); var _w3 = file_write("_csmoke.txt", out3); var f3 = exec_code("cmd /c findstr /C:\"C 冒烟通过\" _csmoke.txt >nul 2>&1"); if f3 == 0 { o3 = 1 } } }
+if o3 == 1 { println("PASS 步骤3：C LoadLibrary 冒烟（is_tty/raw_mode ABI）"); pass = pass + 1 } else { println("FAIL 步骤3：C LoadLibrary 冒烟（is_tty/raw_mode ABI）"); fail = fail + 1 }
+
+// ---------- 4) tie 侧回归驱动（platform_demo，非交互重定向降级）----------
+var o4: i64 = 0
+var demoexe = dir + "\\..\\..\\tests\\s10_platform\\platform_demo.exe"
+var _d4 = exec_code("cmd /c del " + demoexe + " >nul 2>&1")
+rc = exec_code("cmd /c " + tiec + " ..\\..\\tests\\s10_platform\\platform_demo.tie -o ..\\..\\tests\\s10_platform\\platform_demo.exe >nul 2>&1")
+if rc == 0 && file_exists(demoexe) { var dout = exec_output("cmd /c ..\\..\\tests\\s10_platform\\platform_demo.exe 2>&1"); var _w4 = file_write("_s4.txt", dout); var f4 = exec_code("cmd /c findstr /C:\"impl-win32 平台桥回归通过\" _s4.txt >nul 2>&1"); if f4 == 0 { o4 = 1 } }
+if o4 == 1 { println("PASS 步骤4：tie 侧平台桥回归（重定向降级）"); pass = pass + 1 } else { println("FAIL 步骤4：tie 侧平台桥回归（重定向降级）"); fail = fail + 1 }
+
+// ---------- 5) 进程管道捕获（capture('cmd /c echo hello') → 读到 hello）----------
+var o5: i64 = 0
+var pipeexe = dir + "\\..\\..\\tests\\s10_platform\\pipe_demo.exe"
+var _d5 = exec_code("cmd /c del " + pipeexe + " >nul 2>&1")
+rc = exec_code("cmd /c " + tiec + " ..\\..\\tests\\s10_platform\\pipe_demo.tie -o ..\\..\\tests\\s10_platform\\pipe_demo.exe >nul 2>&1")
+if rc == 0 && file_exists(pipeexe) { var pout = exec_output("cmd /c ..\\..\\tests\\s10_platform\\pipe_demo.exe 2>&1"); var _w5 = file_write("_s5.txt", pout); var f5 = exec_code("cmd /c findstr /C:\"进程管道回归通过\" _s5.txt >nul 2>&1"); if f5 == 0 { o5 = 1 } }
+if o5 == 1 { println("PASS 步骤5：进程管道捕获（结构化 CreateProcessW）读到 hello"); pass = pass + 1 } else { println("FAIL 步骤5：进程管道捕获（结构化 CreateProcessW）读到 hello"); fail = fail + 1 }
+
+// ---------- 6) 双向管道（run('cmd /c set /p ...','hello') → got:hello 且退出码 0）----------
+var o6: i64 = 0
+var runexe = dir + "\\..\\..\\tests\\s10_platform\\run_demo.exe"
+var _d6 = exec_code("cmd /c del " + runexe + " >nul 2>&1")
+rc = exec_code("cmd /c " + tiec + " ..\\..\\tests\\s10_platform\\run_demo.tie -o ..\\..\\tests\\s10_platform\\run_demo.exe >nul 2>&1")
+if rc == 0 && file_exists(runexe) { var rout = exec_output("cmd /c ..\\..\\tests\\s10_platform\\run_demo.exe 2>&1"); var _w6 = file_write("_s6.txt", rout); var f6 = exec_code("cmd /c findstr /C:\"双向管道回归通过\" _s6.txt >nul 2>&1"); if f6 == 0 { o6 = 1 } }
+if o6 == 1 { println("PASS 步骤6：双向管道（stdin→stdout 闭环 + 退出码）"); pass = pass + 1 } else { println("FAIL 步骤6：双向管道（stdin→stdout 闭环 + 退出码）"); fail = fail + 1 }
+
+// ---------- 7) 交互式双向管道（S10d，mnn 双会话泵）----------
+var o7: i64 = 0
+var echoc = dir + "\\..\\..\\tests\\s10_platform\\echo_child.c"
+var echoexe = dir + "\\..\\..\\tests\\s10_platform\\echo_child.exe"
+var interexe = dir + "\\..\\..\\tests\\s10_platform\\interactive_demo.exe"
+var _d7 = exec_code("cmd /c del " + echoexe + " >nul 2>&1")
+rc = exec_code("cmd /c clang " + echoc + " -o " + echoexe + " >nul 2>&1")
+if file_exists(echoexe) { var _di = exec_code("cmd /c del " + interexe + " >nul 2>&1"); rc = exec_code("cmd /c " + tiec + " ..\\..\\tests\\s10_platform\\interactive_demo.tie -o ..\\..\\tests\\s10_platform\\interactive_demo.exe >nul 2>&1"); if rc == 0 && file_exists(interexe) { var iout = exec_output("cmd /c ..\\..\\tests\\s10_platform\\interactive_demo.exe 2>&1"); var _w7 = file_write("_s7.txt", iout); var f7 = exec_code("cmd /c findstr /C:\"交互式双向管道回归通过\" _s7.txt >nul 2>&1"); if f7 == 0 { o7 = 1 } } }
+if o7 == 1 { println("PASS 步骤7：交互式双向管道（实时收发 + mnn 泵）"); pass = pass + 1 } else { println("FAIL 步骤7：交互式双向管道（实时收发 + mnn 泵）"); fail = fail + 1 }
+
+// ---------- 8) 多会话交错 avail/read（tiec S10e 根因修复）----------
+var o8: i64 = 0
+var ilx = dir + "\\..\\..\\tests\\s10_platform\\interleave_demo.exe"
+if file_exists(echoexe) { var _d8 = exec_code("cmd /c del " + ilx + " >nul 2>&1"); rc = exec_code("cmd /c " + tiec + " ..\\..\\tests\\s10_platform\\interleave_demo.tie -o ..\\..\\tests\\s10_platform\\interleave_demo.exe >nul 2>&1"); if rc == 0 && file_exists(ilx) { var ilout = exec_output("cmd /c ..\\..\\tests\\s10_platform\\interleave_demo.exe 2>&1"); var _w8 = file_write("_s8.txt", ilout); var f8 = exec_code("cmd /c findstr /C:\"多会话交错回归通过\" _s8.txt >nul 2>&1"); if f8 == 0 { o8 = 1 } } }
+if o8 == 1 { println("PASS 步骤8：多会话交错 avail/read（无串线/丢失，tiec S10e 根因修复）"); pass = pass + 1 } else { println("FAIL 步骤8：多会话交错 avail/read（无串线/丢失，tiec S10e 根因修复）"); fail = fail + 1 }
+
+// 清理临时文件 + 汇总
+var _c = exec_code("cmd /c del _exports_reg.txt _csmoke.txt _s4.txt _s5.txt _s6.txt _s7.txt _s8.txt >nul 2>&1")
+println("")
+println("=== 汇总: PASS=" + to_string(pass) + " FAIL=" + to_string(fail) + " ===")
+exit 0

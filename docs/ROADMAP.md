@@ -23,8 +23,8 @@
 | **S7（完成）** | 运行时内省诊断（diag） | 统一诊断快照 + 内省自检，tests/s7diag 验收 |
 | **S8（完成）** | 动态加载 + 模块生命周期（module 注册表） | load/内省/invoke/unload 生命周期，tests/s8mod 验收 |
 | **S9（完成）** | AOT 前端（tieir → LLVM IR → 原生编译执行） | llc/clang 原生执行与 interp 契约一致，tests/s9aot 验收 |
-| **S10c（完成）** | 平台桥 win32 进程管道：`capture` 结构化捕获 + `run` 批处理式双向管道 | regress-platform.ps1 步骤 1-6 全绿（pipes） |
-| **S10d（完成）** | 平台桥交互式会话（stdin 不关、实时收发）+ trm_mnn 双会话泵（M:N 调度） | regress-platform.ps1 步骤 7 全绿（interactive_demo） |
+| **S10c（完成）** | 平台桥 win32 进程管道：`capture` 结构化捕获 + `run` 批处理式双向管道 | regress-platform.tsh.tie 步骤 1-6 全绿（pipes） |
+| **S10d（完成）** | 平台桥交互式会话（stdin 不关、实时收发）+ trm_mnn 双会话泵（M:N 调度） | regress-platform.tsh.tie 步骤 7 全绿（interactive_demo） |
 
 ## 3. S1 具体方案
 
@@ -90,7 +90,7 @@
   登记 `interp / tiejit / orcjit`，同一组用例逐个后端执行比对，落成 用例×后端 矩阵。
 - 验收（`tests/s5jit`）：add/sub/mul 3 用例 × 3 后端，interp 与 tiejit 全 PASS（两实现
   同契一致），orcjit（LLVM）标记未实现 SKIP；19 断言全过。
-- **orcjit 接入（S5b）**：新增独立 LLVM-MCJIT 驱动进程（`orcjit.c` + `build-orcjit.ps1`，
+- **orcjit 接入（S5b）**：新增独立 LLVM-MCJIT 驱动进程（`orcjit.c` + `build-orcjit.tsh.tie`，
   用 D:\LLVM 的 LLVM-C 现场构造 i64 二元函数模块并真 JIT），tie 侧 `trm_orcjit`（`jit.tie`）
   读 tieir op → 调驱动 → 解析输出。契约矩阵升级为**三端全 PASS、无 SKIP**（18 断言全过）。
 - orcjit 用进程边界桥（tiec 无附加链接库/原始函数指针，进程内桥 LLVM 风险过高）；
@@ -141,7 +141,7 @@
   并将会话注册为 `trm_mnn` 协程（`PUMP_LEASE` 相位数）；`pump_round` 调 mnn `tick`，每轮
   **至多推进 M 个会话各一阶段**（M:N 上界），多会话交错获调度时间片、互不饿死；`mnn_step(sid)`
   暴露会话被推进的步数（≥1 即获调度）。
-- 验收（`regress-platform.ps1` 步骤 7）：`interactive_demo` —— 场景1 单会话两轮实时收发
+- 验收（`regress-platform.tsh.tie` 步骤 7）：`interactive_demo` —— 场景1 单会话两轮实时收发
   （stdin 全程不关、write→read 应答闭环、EOF 收尾 exit=0）；场景2 双会话泵（peak≤workers=2 且
   两会话 step≥1，输出逐会话 read 直读互不串线）。子进程 `echo_child.c` 每行实时回显模拟 REPL。
 - **新增 tiec 后端坑（同 §3.3/3.4 类）**：多会话**交错** `run_avail`/`run_read` 在该 tiec 构建下

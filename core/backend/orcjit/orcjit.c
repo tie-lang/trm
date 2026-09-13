@@ -14,7 +14,7 @@
  * 其他语言实现」的契约框架）。LLVM IR 从 tieir 的降级（IR 生成）留待 P3——本探针
  * 只证明「LLVM JIT 执行同契一致、可进入矩阵」。
  *
- * 构建（PowerShell）：见 build-orcjit.ps1（clang + D:\LLVM 的 LLVM-C.lib / LLVM-C.dll）。
+ * 构建（tsh 角色）：见 build-orcjit.tsh.tie（clang + D:\LLVM 的 LLVM-C.lib / LLVM-C.dll）。
  */
 #include <llvm-c/Core.h>
 #include <llvm-c/ExecutionEngine.h>

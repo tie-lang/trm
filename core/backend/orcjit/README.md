@@ -5,7 +5,7 @@
 
 ## 现状（已接入）
 
-- `orcjit.c` + `build-orcjit.ps1`：独立 **LLVM MCJIT 驱动进程**（D:\LLVM 的 LLVM-C）。
+- `orcjit.c` + `build-orcjit.tsh.tie`（原 `build-orcjit.ps1`）：独立 **LLVM MCJIT 驱动进程**（D:\LLVM 的 LLVM-C）。
   对 `op a b` 用 IRBuilder 现场构造 `i64 cf(i64,i64)` 模块，经 `LLVMCreateExecutionEngineForModule`
   **真 JIT 编译并调用**，结果十进制打印（无换行）。这证明 LLVM JIT 执行路径真实可用。
 - `jit.tie`（`trm_orcjit`）：tie 侧后端。读 tieir 纯函数算术 op → 调驱动进程 → 捕获 stdout → 解析，
@@ -17,8 +17,8 @@
 
 ## 构建
 
-```powershell
-powershell -File core/backend/orcjit/build-orcjit.ps1   # 产 orcjit.exe + LLVM-C.dll
+```sh
+tshell -f core/backend/orcjit/build-orcjit.tsh.tie   # 须在 core/backend/orcjit 目录下执行；产 orcjit.exe + LLVM-C.dll
 ```
 
 - 依赖 D:\LLVM（LLVM-C.dll/.lib + include/llvm-c）；随包分发时改任一 `TIE_LLVM_HOME` 即可。

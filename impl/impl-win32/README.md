@@ -32,8 +32,8 @@ STARTUPINFOW/PROCESS_INFORMATION 经指针传 Win32，SetHandleInformation 置�
 
 ## 构建与回归
 
-```powershell
-pwsh impl/impl-win32/regress-platform.ps1   # 7 项：.dll / 导出面 / C 冒烟 / 终端 / 管道捕获 / 双向管道 / 交互式（mnn 泵）
+```sh
+tshell -f impl/impl-win32/regress-platform.tsh.tie   # 须在 impl/impl-win32 目录下执行；8 项：.dll / 导出面 / C 冒烟 / tie 回归 / 管道捕获 / 双向管道 / 交互式（mnn 泵）/ 多会话交错
 ```
 
 - tie 侧回归驱动：`tests/s10_platform/platform_demo.tie`（is_tty/raw_mode 重定向降级）；

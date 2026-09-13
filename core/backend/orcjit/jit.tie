@@ -2,7 +2,7 @@ type tie<class>
 // core/backend/orcjit/jit.tie —— orcjit LLVM JIT 后端（命名空间 trm_orcjit）。
 // 对应 port/backend.tie 的 Backend 契约：与 interp/tiejit 同一 tieir、给出同契结果。
 // 本后端把 tieir 纯函数的算术 op（与 core/middle/ir.tie 一致：add=0 sub=1 mul=2 div=3）
-// 交给独立 LLVM-MCJIT 驱动进程 orcjit.exe（见本目录 orcjit.c / build-orcjit.ps1）真 JIT
+// 交给独立 LLVM-MCJIT 驱动进程 orcjit.exe（见本目录 orcjit.c / build-orcjit.tsh.tie）真 JIT
 // 执行，捕获 stdout 十进制结果后回灌，作为契约矩阵的第三个实端（真实 LLVM JIT 路径）。
 // 说明：仅覆盖单块 2 参算术纯函数；完整 tieir→LLVM IR 降级留待 P3。
 // 调用：trm_orcjit.run(fname, args) -> i64；失败返回 0 并置 j_err。
