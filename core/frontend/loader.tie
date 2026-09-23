@@ -287,7 +287,9 @@ pub func load_bytes(t: table<i64>) -> bool {
     if !rd_sec_head(t, 5) {
         return false
     }
-    // 函数表
+    // 函数表（p.9.21.7：fpo/fpc 暂存，指令段做 fpo 连续性校验）
+    var l_fpos = table_new_i64()
+    var l_fpcs = table_new_i64()
     var fn_n = rd_i64(t)
     if l_err != "" {
         return false
@@ -312,12 +314,14 @@ pub func load_bytes(t: table<i64>) -> bool {
             set_err("tieir 函数参数数非法")
             return false
         }
-        if fpo != l_total_params {
-            set_err("tieir 函数参数段偏移不一致(函数" + to_string(fi) + ")")
-            return false
-        }
+        // p.9.21.7（D1/D2）：文件布局 = 原模块交错序（每函数 [参数][操作数]），
+        // fpo 是原布局位置，不能与本 loader 的参数前缀布局比对——记录后由
+        // 指令段做连续性校验（见 inst 循环）。l_fp_off 记本 loader 参数前缀
+        // 布局位置（= 累计参数），func_param_val_id 契约不变。
+        table_push(l_fpos, fpo)
+        table_push(l_fpcs, fpc)
         table_push(l_fname, fnm); table_push(l_fret, frt)
-        table_push(l_fp_off, fpo); table_push(l_fp_cnt, fpc)
+        table_push(l_fp_off, l_total_params); table_push(l_fp_cnt, fpc)
         table_push(l_fentry, fen); table_push(l_finst, fit)
         table_push(l_fexp, fex)
         table_push(l_fty_off, len(l_ftys))
@@ -362,7 +366,10 @@ pub func load_bytes(t: table<i64>) -> bool {
         table_push(bstarts, bst); table_push(bends, ben)
         bi = bi + 1
     }
-    // 指令表
+    // 指令表。p.9.21.7（D1/D2）值空间重映射：文件值 id = 原模块交错创建序
+    // （函数边界处参数领号、结果随指令领号）；本 loader 值空间 = 参数
+    // 0..P-1 先行、结果 P.. 按序（func_param_val_id 契约）。remap[原] = 本地。
+    // 文件内部一致性：①结果值连续（ivl == next_orig）②函数边界 fpo 连续。
     var ins_n = rd_i64(t)
     if l_err != "" {
         return false
@@ -371,7 +378,29 @@ pub func load_bytes(t: table<i64>) -> bool {
         set_err("tieir 指令数非法")
         return false
     }
-    var prev_off: i64 = l_total_params  // 重建的自然操作数段偏移
+    var cum_params = table_new_i64()
+    var p_total: i64 = 0
+    var ci: i64 = 0
+    while ci < fn_n {
+        table_push(cum_params, p_total)
+        p_total = p_total + l_fp_cnt[ci]
+        ci = ci + 1
+    }
+    var remap = table_new_i64()
+    var remap_n: i64 = 0
+    var next_orig: i64 = 0
+    var alloc_fns: i64 = 0
+    var result_ord: i64 = 0
+    var cur_fn: i64 = -1
+    var expected_fpo: i64 = 0
+    var fops_accum: i64 = 0
+    if fn_n > 0 {
+        expected_fpo = l_fpos[0]
+    }
+    // 布局自动探测（首个结果值领号位置）：0 = 交错序（真实 tiec 产物，参数在
+    // 函数边界领号）；1 = 参数前置序（gen2 时代手编单元，参数 0..P-1 先行，
+    // remap 恒等）。两种布局都接受。
+    var layout: i64 = 0
     var ii: i64 = 0
     while ii < ins_n {
         var owner = rd_i64(t)
@@ -391,12 +420,78 @@ pub func load_bytes(t: table<i64>) -> bool {
             set_err("tieir 指令所属块越界")
             return false
         }
-        if iof != prev_off {
-            set_err("tieir 指令操作数段偏移不一致(指令" + to_string(ii) + ")")
+        var k = l_bfunc[owner]
+        if k < cur_fn {
+            set_err("tieir 指令所属函数乱序")
             return false
         }
+        if layout == 0 && k > cur_fn {
+            if cur_fn >= 0 {
+                expected_fpo = expected_fpo + l_fpcs[cur_fn] + fops_accum
+            }
+            var m = cur_fn + 1
+            while m < k {
+                expected_fpo = expected_fpo + l_fpcs[m]
+                m = m + 1
+            }
+            if l_fpos[k] != expected_fpo {
+                set_err("tieir 函数参数段偏移不连续（函数 " + to_string(k) + "）")
+                return false
+            }
+            var m2 = cur_fn + 1
+            while m2 <= k {
+                var j2: i64 = 0
+                while j2 < l_fpcs[m2] {
+                    var oid = next_orig + j2
+                    while remap_n <= oid {
+                        table_push(remap, 0 - 1)
+                        remap_n = remap_n + 1
+                    }
+                    remap[oid] = cum_params[m2] + j2
+                    j2 = j2 + 1
+                }
+                next_orig = next_orig + l_fpcs[m2]
+                m2 = m2 + 1
+            }
+            alloc_fns = k + 1
+            cur_fn = k
+            fops_accum = 0
+        }
+        fops_accum = fops_accum + icn
+        // 结果值：布局探测 + 连续性校验。交错序：ivl == next_orig（参数在边界
+        // 领号）；参数前置序：首个结果 ivl == p_total（参数 0..P-1，remap 恒等）。
+        var lv: i64 = 0 - 1
+        if ivl >= 0 {
+            if layout == 0 && ivl == p_total && result_ord == 0 && next_orig != p_total {
+                // 参数前置布局探测成功：参数 0..P-1 恒等重映射
+                layout = 1
+                var pi: i64 = 0
+                while pi < p_total {
+                    while remap_n <= pi {
+                        table_push(remap, 0 - 1)
+                        remap_n = remap_n + 1
+                    }
+                    remap[pi] = pi
+                    pi = pi + 1
+                }
+                next_orig = p_total
+                alloc_fns = fn_n
+            }
+            if ivl != next_orig {
+                set_err("tieir 指令结果值非连续（指令 " + to_string(ii) + " 文件 " + to_string(ivl) + " 期望 " + to_string(next_orig) + "）")
+                return false
+            }
+            lv = p_total + result_ord
+            result_ord = result_ord + 1
+            next_orig = next_orig + 1
+            while remap_n <= ivl {
+                table_push(remap, 0 - 1)
+                remap_n = remap_n + 1
+            }
+            remap[ivl] = lv
+        }
         table_push(l_iop, iop); table_push(l_ity, ity)
-        table_push(l_ival, ivl); table_push(l_ioff, iof); table_push(l_icnt, icn)
+        table_push(l_ival, lv); table_push(l_icnt, icn)
         // 本地 l_ops 起始下标（逐指令紧凑打包，与文件 ops_off 不同）
         table_push(l_opstart, len(l_ops))
         var ok: i64 = 0
@@ -406,15 +501,31 @@ pub func load_bytes(t: table<i64>) -> bool {
             if l_err != "" {
                 return false
             }
+            // kind 0 = SSA 值（重映射）；其余（块/立即数/池 id/全局名）原样
+            if okd == 0 {
+                if ov < 0 || ov >= remap_n {
+                    set_err("tieir 值操作数越界（指令 " + to_string(ii) + " 值 " + to_string(ov) + "）")
+                    return false
+                }
+                if remap[ov] < 0 {
+                    set_err("tieir 值操作数引用未定义（指令 " + to_string(ii) + " 值 " + to_string(ov) + "）")
+                    return false
+                }
+                ov = remap[ov]
+            }
             table_push(l_ops, ov)
             table_push(l_ops, okd)
             ok = ok + 1
         }
-        prev_off = prev_off + icn * 2
-        if ity >= 0 {
+        if lv >= 0 {
             l_value_count = l_value_count + 1
         }
         ii = ii + 1
+    }
+    // 尾部无指令函数的参数（原空间收尾；本地值空间已在函数表建好）
+    while alloc_fns < fn_n {
+        next_orig = next_orig + l_fp_cnt[alloc_fns]
+        alloc_fns = alloc_fns + 1
     }
     // 校验块区间合理（start<=end 且按块非负）
     var bj: i64 = 0
@@ -488,6 +599,15 @@ pub func load_bytes(t: table<i64>) -> bool {
 // 逗号分隔字节文本中转；此处用可靠的 fs 文本读 + 纯逻辑解析成字节表）。
 // path 指向逗号分隔字节数的文本文件。成功返回 true。
 pub func load(path: string) -> bool {
+    // p.9.21.7（D2）：优先二进制（byte_read 直读 tiec --tieir-out / .tir 产物；
+    // 魔数 "TIEIR" 匹配即按二进制解析，失败不回退——避免误读）；否则回退
+    // 文本字节 CSV（gen2 时代 workaround 格式）。
+    var b = byte_read(path)
+    if len(b) > 13 {
+        if b[0] == 84 && b[1] == 73 && b[2] == 69 && b[3] == 73 && b[4] == 82 {
+            return load_bytes(b)
+        }
+    }
     var content = fs.read_to_string(path)
     if len(content) == 0 {
         set_err("读取 tieir 字节文本失败或为空: " + path)

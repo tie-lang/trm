@@ -162,6 +162,17 @@ func exec_block(bid: i64) -> i64 {
                 store_result(ii, fv)
             }
         }
+        // 内存三原语（p.9.21.7 D2：真实 tiec IR 的参数溢出形态 alloca/store/load）。
+        // 槽地址 = alloca 的结果值 id；槽内容存于 i_vt[槽地址]。
+        else if op == 20 {   // alloca：槽初始化 0
+            store_result(ii, 0)
+        }
+        else if op == 21 {   // load：操作数① = 槽地址（值引用）→ 读槽内容
+            store_result(ii, read_opnd(ii, 0))
+        }
+        else if op == 22 {   // store：操作数 [类型IMM, 值VALUE, 槽地址VALUE]
+            i_vt[read_opnd_raw(ii, 2)] = read_opnd(ii, 1)
+        }
         ii = ii + 1
     }
     set_err("块 " + to_string(bid) + " 无返回指令")
