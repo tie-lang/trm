@@ -22,6 +22,10 @@ var l_pkg_name: string = ""
 var l_pkg_version: string = ""
 var l_ir_version: i64 = 0
 var l_comp_version: string = ""
+// v2 新增字段（tiec p.9.20：t 轴档位 / pass 管道版本；v1 文件保持 0）
+var l_format_ver: i64 = 0
+var l_tie_opt: i64 = 0
+var l_pass_ver: i64 = 0
 // 函数表
 var l_fname: table<i64>;      // 函数名（池 id）
 var l_fret: table<i64>;       // 返回类型 id
@@ -71,6 +75,9 @@ func reset_state() {
     l_pkg_version = ""
     l_ir_version = 0
     l_comp_version = ""
+    l_format_ver = 0
+    l_tie_opt = 0
+    l_pass_ver = 0
     l_pool = table_new_string()
     l_fname = table_new_i64(); l_fret = table_new_i64()
     l_fp_off = table_new_i64(); l_fp_cnt = table_new_i64()
@@ -183,10 +190,14 @@ pub func load_bytes(t: table<i64>) -> bool {
     if l_err != "" {
         return false
     }
-    if ver != 1 {
+    // 格式版本：v1 = 初版；v2（tiec p.9.20）= 模块头在编译器版本串后新增
+    // t 轴档位 + pass 管道版本两个 i64（段 3-7 布局不变）。两版都接受，
+    // v2 额外读入并记录两个新字段。
+    if ver != 1 && ver != 2 {
         set_err("tieir 版本不兼容(" + to_string(ver) + ")")
         return false
     }
+    l_format_ver = ver
     // 段2：模块头
     if !rd_sec_head(t, 2) {
         return false
@@ -195,6 +206,15 @@ pub func load_bytes(t: table<i64>) -> bool {
     var pkgv = rd_str(t)
     l_ir_version = rd_i64(t)
     var compv = rd_str(t)
+    // v2 新增：t 轴档位 + pass 管道版本（v1 无这两字段，跳过）
+    if l_format_ver >= 2 {
+        l_tie_opt = rd_i64(t)
+        l_pass_ver = rd_i64(t)
+        if l_err != "" {
+            l_err = "tieir 模块头解析失败"
+            return false
+        }
+    }
     var depn = rd_i64(t)
     if l_err != "" || !in_sec() {
         l_err = "tieir 模块头解析失败"

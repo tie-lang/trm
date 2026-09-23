@@ -1,0 +1,35 @@
+type tie<logic>
+// tests/s3pure/run_tiec.tie —— 模块 ABI 第二消费者验收：加载 tiec --tieir-out
+// 产出的 .tieir（v2 格式），dump + interp 执行纯函数。
+// 用法：run_tiec.exe <path-to.tieir>
+import "../../core/frontend/loader.tie"
+import "../../core/frontend/interp.tie"
+
+func main() {
+    var path = "."
+    if arg_count() >= 1 {
+        path = arg_string(0)
+    }
+    if !trm_loader.load(path) {
+        println("[run_tiec] 加载失败: " + trm_loader.err_msg())
+        return
+    }
+    println(trm_loader.dump_text())
+    check("add", 2, 3, 5)
+    check("sub", 9, 4, 5)
+    check("mul", 6, 7, 42)
+    println("[OK] 模块 ABI：tiec v2 tieir 经 trm loader+interp 跑通纯函数")
+}
+
+func check(fname: string, a: i64, b: i64, want: i64) {
+    var args: table<i64> = table_new_i64()
+    table_push(args, a)
+    table_push(args, b)
+    var got = trm_interp.run(fname, args)
+    var status: string = "FAIL"
+    if got == want {
+        status = "PASS"
+    }
+    println(fname + "(" + to_string(a) + "," + to_string(b) + ") = " + to_string(got)
+        + "  期望 " + to_string(want) + "  [" + status + "]")
+}
