@@ -130,12 +130,12 @@ unsafe fn tp_widewstr(s: string, out: ptr<u8>) {
     var i: i64 = 0
     while i < n {
         var cp: i64 = char_code(str_char(s, i))   // ASCII 码点 = 字节值
-        deref_write(ptr_add(out, 2 * i), as_u8(cp & 255))
-        deref_write(ptr_add(out, 2 * i + 1), as_u8(0))
+        deref_write(ptr_add(out, 2 * i), to_u8(cp & 255))
+        deref_write(ptr_add(out, 2 * i + 1), to_u8(0))
         i = i + 1
     }
-    deref_write(ptr_add(out, 2 * n), as_u8(0))
-    deref_write(ptr_add(out, 2 * n + 1), as_u8(0))
+    deref_write(ptr_add(out, 2 * n), to_u8(0))
+    deref_write(ptr_add(out, 2 * n + 1), to_u8(0))
 }
 
 // 捕获命令输出：结构化 CreatePipe/CreateProcessW（STARTUPINFOW/PROCESS_INFORMATION
@@ -155,8 +155,8 @@ pub unsafe func capture(cmd: string) -> string {
     SetHandleInformation(hw, 1u32, 1u32)
     SetHandleInformation(hr, 1u32, 0u32)
     // 结构化 STARTUPINFOW：cb=sizeof(104)，附加 std 句柄到管道写端
-    si.cb = as_u32(104)
-    si.dwFlags = as_u32(256)          // STARTF_USESTDHANDLES = 0x100
+    si.cb = to_u32(104)
+    si.dwFlags = to_u32(256)          // STARTF_USESTDHANDLES = 0x100
     si.hStdInput = GetStdHandle(-10)  // STD_INPUT_HANDLE（子进程不读 stdin）
     si.hStdOutput = hw
     si.hStdError = hw
@@ -171,13 +171,13 @@ pub unsafe func capture(cmd: string) -> string {
     var out: string = ""
     var guard: i64 = 0
     while guard < 8388608 {   // 上限 8MB，防异常不返回
-        rcount = as_u32(0)
+        rcount = to_u32(0)
         if ReadFile(hr, buf, 4096u32, addr_of(rcount), 0) == 0 {
             break
         }
         var j: i64 = 0
-        while j < as_i64(rcount) {
-            out = out + str_from_code(as_i64(deref(ptr_add(buf, j))))
+        while j < to_i64(rcount) {
+            out = out + str_from_code(to_i64(deref(ptr_add(buf, j))))
             j = j + 1
         }
         if rcount == 0u32 {
@@ -197,10 +197,10 @@ unsafe fn tp_ascii_buf(s: string, out: ptr<u8>) {
     var n: i64 = str_len(s)
     var i: i64 = 0
     while i < n {
-        deref_write(ptr_add(out, i), as_u8(char_code(str_char(s, i)) & 255))
+        deref_write(ptr_add(out, i), to_u8(char_code(str_char(s, i)) & 255))
         i = i + 1
     }
-    deref_write(ptr_add(out, n), as_u8(0))
+    deref_write(ptr_add(out, n), to_u8(0))
 }
 
 // 双向管道：启动子进程，把 input 写入其 stdin（关闭即 EOF），读其 stdout 到 EOF，
@@ -217,7 +217,7 @@ pub unsafe func run(cmd: string, input: string) -> string {
     var pi: TP_PROCESS_INFORMATION = TP_PROCESS_INFORMATION()
     var rcount: u32 = 0
     var buf: ptr<u8> = alloc(4096)
-    tp_last_exit = as_i32(0)
+    tp_last_exit = to_i32(0)
     if CreatePipe(addr_of(hr), addr_of(hw), 0, 0) == 0 {
         return ""
     }
@@ -232,8 +232,8 @@ pub unsafe func run(cmd: string, input: string) -> string {
     SetHandleInformation(hr, 1u32, 0u32)
     SetHandleInformation(iw, 1u32, 0u32)
     // 结构化 STARTUPINFOW：stdin/out/err 三句柄接管道
-    si.cb = as_u32(104)
-    si.dwFlags = as_u32(256)          // STARTF_USESTDHANDLES = 0x100
+    si.cb = to_u32(104)
+    si.dwFlags = to_u32(256)          // STARTF_USESTDHANDLES = 0x100
     si.hStdInput = ir
     si.hStdOutput = hw
     si.hStdError = hw
@@ -255,20 +255,20 @@ pub unsafe func run(cmd: string, input: string) -> string {
         var ibuf: ptr<u8> = alloc(n + 1)
         tp_ascii_buf(input, ibuf)
         var written: u32 = 0
-        WriteFile(iw, ibuf, as_u32(n), addr_of(written), 0)
+        WriteFile(iw, ibuf, to_u32(n), addr_of(written), 0)
     }
     CloseHandle(iw)
     // 读子进程 stdout 到最后一块（子进程独占写端、退出即 EOF）
     var out: string = ""
     var guard: i64 = 0
     while guard < 8388608 {   // 上限 8MB，防异常不返回
-        rcount = as_u32(0)
+        rcount = to_u32(0)
         if ReadFile(hr, buf, 4096u32, addr_of(rcount), 0) == 0 {
             break
         }
         var j: i64 = 0
-        while j < as_i64(rcount) {
-            out = out + str_from_code(as_i64(deref(ptr_add(buf, j))))
+        while j < to_i64(rcount) {
+            out = out + str_from_code(to_i64(deref(ptr_add(buf, j))))
             j = j + 1
         }
         if rcount == 0u32 {
@@ -280,7 +280,7 @@ pub unsafe func run(cmd: string, input: string) -> string {
     WaitForSingleObject(pi.hProcess, 0xFFFFFFFFu32)
     var ec: u32 = 0
     if GetExitCodeProcess(pi.hProcess, addr_of(ec)) != 0 {
-        tp_last_exit = as_i32(ec)
+        tp_last_exit = to_i32(ec)
     }
     CloseHandle(pi.hProcess)
     CloseHandle(pi.hThread)
@@ -297,7 +297,7 @@ pub unsafe func msleep(ms: i64) {
     if ms <= 0 {
         return
     }
-    Sleep(as_u32(ms))
+    Sleep(to_u32(ms))
 }
 
 // ---------- 交互式进程会话（S10d） ----------
@@ -336,8 +336,8 @@ pub unsafe func spawn_run(cmd: string) -> i64 {
     SetHandleInformation(hr, 1u32, 0u32)
     SetHandleInformation(iw, 1u32, 0u32)
     // 结构化 STARTUPINFOW：stdin/out/err 三句柄接管道
-    si.cb = as_u32(104)
-    si.dwFlags = as_u32(256)          // STARTF_USESTDHANDLES = 0x100
+    si.cb = to_u32(104)
+    si.dwFlags = to_u32(256)          // STARTF_USESTDHANDLES = 0x100
     si.hStdInput = ir
     si.hStdOutput = hw
     si.hStdError = hw
@@ -373,10 +373,10 @@ pub unsafe func run_write(sid: i64, data: string) -> i32 {
     var ibuf: ptr<u8> = alloc(n + 1)
     tp_ascii_buf(data, ibuf)
     var written: u32 = 0
-    if WriteFile(tp_s_iw[sid], ibuf, as_u32(n), addr_of(written), 0) == 0 {
+    if WriteFile(tp_s_iw[sid], ibuf, to_u32(n), addr_of(written), 0) == 0 {
         return 0
     }
-    return as_i32(written)
+    return to_i32(written)
 }
 
 // 非阻塞探测会话 stdout 当前可读字节数（PeekNamedPipe）；-1 = 会话无效/断管。
@@ -390,7 +390,7 @@ pub unsafe func run_avail(sid: i64) -> i64 {
     if PeekNamedPipe(tp_s_hr[sid], nb, 1u32, addr_of(got), addr_of(total), 0) == 0 {
         return -1
     }
-    return as_i64(total)
+    return to_i64(total)
 }
 
 // 阻塞读会话 stdout 一帧（至多 4096 字节；子进程退出即 EOF 返回空串）。
@@ -406,8 +406,8 @@ pub unsafe func run_read(sid: i64) -> string {
     }
     var out: string = ""
     var j: i64 = 0
-    while j < as_i64(rcount) {
-        out = out + str_from_code(as_i64(deref(ptr_add(buf, j))))
+    while j < to_i64(rcount) {
+        out = out + str_from_code(to_i64(deref(ptr_add(buf, j))))
         j = j + 1
     }
     return out
@@ -433,7 +433,7 @@ pub unsafe func run_wait(sid: i64) -> i32 {
     WaitForSingleObject(tp_s_proc[sid], 0xFFFFFFFFu32)
     var ec: u32 = 0
     if GetExitCodeProcess(tp_s_proc[sid], addr_of(ec)) != 0 {
-        tp_last_exit = as_i32(ec)
+        tp_last_exit = to_i32(ec)
     }
     CloseHandle(tp_s_proc[sid])
     CloseHandle(tp_s_thr[sid])
